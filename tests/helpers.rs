@@ -12,24 +12,27 @@ impl ValkeyInstance {
         let so_path = {
             use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
 
-            let debug = format!("target/debug/{}gzset{}", DLL_PREFIX, DLL_SUFFIX);
-            let release = format!("target/release/{}gzset{}", DLL_PREFIX, DLL_SUFFIX);
+            let candidates = [
+                format!("target/release/{}gzset{}", DLL_PREFIX, DLL_SUFFIX),
+                format!("target/debug/{}gzset{}", DLL_PREFIX, DLL_SUFFIX),
+            ];
 
-            // If neither build artifact exists, attempt to build the module.
-            if !std::path::Path::new(&debug).exists() && !std::path::Path::new(&release).exists() {
+            let mut path = candidates
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .cloned();
+
+            if path.is_none() {
                 let status = Command::new("cargo")
                     .arg("build")
                     .status()
                     .expect("failed to run cargo build");
                 assert!(status.success(), "cargo build failed");
+
+                path = candidates.iter().find(|p| std::path::Path::new(p).exists()).cloned();
             }
 
-            let path = if std::path::Path::new(&release).exists() {
-                release
-            } else {
-                debug
-            };
-            assert!(std::path::Path::new(&path).exists(), "{} not built", path);
+            let path = path.expect("libgzset.so not built");
             std::fs::canonicalize(path).unwrap()
         };
 
