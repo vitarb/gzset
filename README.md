@@ -15,3 +15,7 @@ For functional tests with a Valkey instance, run `cargo integ` (or `cargo test -
 The `cargo integ` alias automatically builds the `libgzset.so` shared library first via
 the `build_module` helper test so that the module is available when the integration
 tests start.
+
+## Contributing
+
+See [AGENTS.md](AGENTS.md) for contributor guidelines used by automated agents.
