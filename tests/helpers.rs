@@ -12,6 +12,18 @@ impl ValkeyInstance {
         let so_path = {
             let debug = "target/debug/libgzset.so";
             let release = "target/release/libgzset.so";
+
+            // If neither build artifact exists, attempt to build the module.
+            if !std::path::Path::new(debug).exists()
+                && !std::path::Path::new(release).exists()
+            {
+                let status = Command::new("cargo")
+                    .arg("build")
+                    .status()
+                    .expect("failed to run cargo build");
+                assert!(status.success(), "cargo build failed");
+            }
+
             let path = if std::path::Path::new(release).exists() {
                 release
             } else {
