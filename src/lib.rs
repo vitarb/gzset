@@ -51,12 +51,49 @@ unsafe extern "C" fn gzset_rdb_load(_io: *mut raw::RedisModuleIO, _encver: c_int
 
 unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c_void) {}
 
-fn gzadd(_ctx: &Context, _args: Vec<RedisString>) -> Result {
-    not_implemented()
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+static SETS: once_cell::sync::Lazy<Mutex<BTreeMap<String, Vec<(f64, String)>>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(BTreeMap::new()));
+
+fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() != 4 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let score: f64 = args[2].parse_float()?;
+    let member = args[3].to_string_lossy();
+
+    let mut sets = SETS.lock().unwrap();
+    let set = sets.entry(key).or_insert_with(Vec::new);
+    for (s, m) in set.iter_mut() {
+        if *m == member {
+            *s = score;
+            set.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            return Ok(0i64.into());
+        }
+    }
+    set.push((score, member));
+    set.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    Ok(1i64.into())
 }
 
-fn gzrank(_ctx: &Context, _args: Vec<RedisString>) -> Result {
-    not_implemented()
+fn gzrank(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() != 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let member = args[2].to_string_lossy();
+    let sets = SETS.lock().unwrap();
+    if let Some(set) = sets.get(&key) {
+        for (idx, (_, m)) in set.iter().enumerate() {
+            if *m == member {
+                return Ok((idx as i64).into());
+            }
+        }
+    }
+    Ok(rm::RedisValue::Null)
 }
 
 fn gzrange(_ctx: &Context, _args: Vec<RedisString>) -> Result {
@@ -96,6 +133,24 @@ pub unsafe extern "C" fn gzset_on_load(
     rm::redis_command!(ctx, "GZRANGE", gzrange, "readonly", 1, 1, 1);
 
     raw::Status::Ok as c_int
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn RedisModule_OnLoad(
+    ctx: *mut raw::RedisModuleCtx,
+    argv: *mut *mut raw::RedisModuleString,
+    argc: c_int,
+) -> c_int {
+    gzset_on_load(ctx, argv, argc)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ValkeyModule_OnLoad(
+    ctx: *mut raw::RedisModuleCtx,
+    argv: *mut *mut raw::RedisModuleString,
+    argc: c_int,
+) -> c_int {
+    gzset_on_load(ctx, argv, argc)
 }
 
 /// Optional unload function called when the module is unloaded.
