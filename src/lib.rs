@@ -54,7 +54,12 @@ unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-static SETS: once_cell::sync::Lazy<Mutex<BTreeMap<String, Vec<(f64, String)>>>> =
+/// Member list stored for a key.
+type ScoreSet = Vec<(f64, String)>;
+/// Map of key name to sorted set data.
+type SetsMap = BTreeMap<String, ScoreSet>;
+
+static SETS: once_cell::sync::Lazy<Mutex<SetsMap>> =
     once_cell::sync::Lazy::new(|| Mutex::new(BTreeMap::new()));
 
 fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
@@ -66,7 +71,7 @@ fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let member = args[3].to_string_lossy();
 
     let mut sets = SETS.lock().unwrap();
-    let set = sets.entry(key).or_insert_with(Vec::new);
+    let set = sets.entry(key).or_default();
     for (s, m) in set.iter_mut() {
         if *m == member {
             *s = score;
@@ -135,6 +140,11 @@ pub unsafe extern "C" fn gzset_on_load(
     raw::Status::Ok as c_int
 }
 
+/// Entrypoint called by Redis when loading the module.
+///
+/// # Safety
+///
+/// The `ctx` pointer and argument list must be valid as provided by Redis.
 #[no_mangle]
 pub unsafe extern "C" fn RedisModule_OnLoad(
     ctx: *mut raw::RedisModuleCtx,
@@ -144,6 +154,11 @@ pub unsafe extern "C" fn RedisModule_OnLoad(
     gzset_on_load(ctx, argv, argc)
 }
 
+/// Entrypoint called by Valkey when loading the module.
+///
+/// # Safety
+///
+/// The `ctx` pointer and arguments must be valid as provided by Valkey.
 #[no_mangle]
 pub unsafe extern "C" fn ValkeyModule_OnLoad(
     ctx: *mut raw::RedisModuleCtx,
