@@ -29,7 +29,10 @@ impl ValkeyInstance {
                     .expect("failed to run cargo build");
                 assert!(status.success(), "cargo build failed");
 
-                path = candidates.iter().find(|p| std::path::Path::new(p).exists()).cloned();
+                path = candidates
+                    .iter()
+                    .find(|p| std::path::Path::new(p).exists())
+                    .cloned();
             }
 
             let path = path.expect("libgzset.so not built");
