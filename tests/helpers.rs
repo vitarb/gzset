@@ -10,9 +10,15 @@ impl ValkeyInstance {
     pub fn start() -> Self {
         let port = portpicker::pick_unused_port().expect("no free ports");
         let so_path = {
-            let debug_so = "target/debug/libgzset.so";
-            assert!(std::path::Path::new(debug_so).exists(), "{} not built", debug_so);
-            std::fs::canonicalize(debug_so).expect("canonicalize")
+            let debug = "target/debug/libgzset.so";
+            let release = "target/release/libgzset.so";
+            let path = if std::path::Path::new(release).exists() {
+                release
+            } else {
+                debug
+            };
+            assert!(std::path::Path::new(path).exists(), "{} not built", path);
+            std::fs::canonicalize(path).unwrap()
         };
 
         let child = Command::new("valkey-server")
