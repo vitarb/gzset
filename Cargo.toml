@@ -1,7 +1,7 @@
 [package]
 name = "gzset"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "GPU accelerated learned sorted set module for Valkey/Redis"
 license = "MIT"
 
@@ -9,4 +9,4 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-redis-module = "0.36"
+redis-module = "2.0.7"
