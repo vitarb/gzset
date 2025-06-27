@@ -10,13 +10,13 @@ impl ValkeyInstance {
     pub fn start() -> Self {
         let port = portpicker::pick_unused_port().expect("no free ports");
         let so_path = {
-            let debug = "target/debug/libgzset.so";
-            let release = "target/release/libgzset.so";
+            use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
+
+            let debug = format!("target/debug/{}gzset{}", DLL_PREFIX, DLL_SUFFIX);
+            let release = format!("target/release/{}gzset{}", DLL_PREFIX, DLL_SUFFIX);
 
             // If neither build artifact exists, attempt to build the module.
-            if !std::path::Path::new(debug).exists()
-                && !std::path::Path::new(release).exists()
-            {
+            if !std::path::Path::new(&debug).exists() && !std::path::Path::new(&release).exists() {
                 let status = Command::new("cargo")
                     .arg("build")
                     .status()
@@ -24,20 +24,24 @@ impl ValkeyInstance {
                 assert!(status.success(), "cargo build failed");
             }
 
-            let path = if std::path::Path::new(release).exists() {
+            let path = if std::path::Path::new(&release).exists() {
                 release
             } else {
                 debug
             };
-            assert!(std::path::Path::new(path).exists(), "{} not built", path);
+            assert!(std::path::Path::new(&path).exists(), "{} not built", path);
             std::fs::canonicalize(path).unwrap()
         };
 
         let child = Command::new("valkey-server")
-            .arg("--port").arg(port.to_string())
-            .arg("--loadmodule").arg(so_path)
-            .arg("--save").arg("")
-            .arg("--daemonize").arg("no")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--loadmodule")
+            .arg(so_path)
+            .arg("--save")
+            .arg("")
+            .arg("--daemonize")
+            .arg("no")
             .spawn()
             .expect("failed to spawn valkey");
 
@@ -53,8 +57,10 @@ impl ValkeyInstance {
 impl Drop for ValkeyInstance {
     fn drop(&mut self) {
         let _ = Command::new("valkey-cli")
-            .arg("-p").arg(self.port.to_string())
-            .arg("shutdown").arg("nosave")
+            .arg("-p")
+            .arg(self.port.to_string())
+            .arg("shutdown")
+            .arg("nosave")
             .status();
         let _ = self.child.wait();
     }
