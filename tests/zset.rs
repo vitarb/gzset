@@ -277,10 +277,7 @@ fn xx_existing_key_no_new_members() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 0);
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 1);
         }
     });
@@ -352,10 +349,7 @@ fn xx_updates_existing_scores() {
             .query::<i64>(&mut *ctx.con);
 
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 3);
             assert_eq!(
                 cmd("ZSCORE")
@@ -407,21 +401,30 @@ fn gt_updates_when_greater() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 3);
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 4);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 11.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 21.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("z").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("z")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 30.0
             );
         }
@@ -458,21 +461,30 @@ fn lt_updates_when_lower() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 4);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 10.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 20.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("z").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("z")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 29.0
             );
         }
@@ -510,21 +522,30 @@ fn gt_xx_updates_existing_skip_new() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 3);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 11.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 21.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("z").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("z")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 30.0
             );
         }
@@ -562,21 +583,30 @@ fn lt_xx_updates_existing_skip_new() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 1);
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 3);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 10.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 20.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("z").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("z")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 29.0
             );
         }
@@ -616,10 +646,7 @@ fn nx_with_non_existing_key() {
             .query::<i64>(&mut *ctx.con);
 
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD")
-                .arg("ztmp")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
             assert_eq!(card, 3);
         }
     });
@@ -655,19 +682,35 @@ fn nx_only_add_new_elements() {
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 10.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 20.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("a").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("a")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 100.0
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("b").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("b")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 200.0
             );
         }
@@ -745,7 +788,11 @@ fn incr_lt_gt_returns_nil_when_unmodified() {
         if ctx.fam == Fam::BuiltIn {
             assert!(res1.unwrap().is_none());
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 28.0
             );
             let res2: Option<f64> = cmd("ZADD")
@@ -758,7 +805,11 @@ fn incr_lt_gt_returns_nil_when_unmodified() {
                 .unwrap();
             assert!(res2.is_none());
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 28.0
             );
         }
@@ -804,11 +855,19 @@ fn incr_lt_gt_with_infinity() {
                 assert!(res.is_none());
             }
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 f64::INFINITY
             );
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("y").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("y")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 f64::NEG_INFINITY
             );
         }
@@ -839,7 +898,11 @@ fn incr_behaves_like_zincrby() {
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap().unwrap(), 25.0);
             assert_eq!(
-                cmd("ZSCORE").arg("ztmp").arg("x").query::<f64>(&mut *ctx.con).unwrap(),
+                cmd("ZSCORE")
+                    .arg("ztmp")
+                    .arg("x")
+                    .query::<f64>(&mut *ctx.con)
+                    .unwrap(),
                 25.0
             );
         }
@@ -977,7 +1040,7 @@ fn variadic_base_case() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(added, 3);
-            let res: Vec<String> = cmd("ZRANGE")
+            let res: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
                 .arg("myzset")
                 .arg("0")
                 .arg("-1")
@@ -1018,7 +1081,7 @@ fn variadic_return_value_added() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(added, 1);
-            let vals: Vec<String> = cmd("ZRANGE")
+            let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
                 .arg("myzset")
                 .arg("0")
                 .arg("-1")
@@ -1046,10 +1109,7 @@ fn variadic_aborts_on_single_error() {
             .query(&mut *ctx.con);
 
         assert!(res.is_err());
-        let exists: i32 = cmd("EXISTS")
-            .arg("myzset")
-            .query(&mut *ctx.con)
-            .unwrap();
+        let exists: i32 = cmd("EXISTS").arg("myzset").query(&mut *ctx.con).unwrap();
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(exists, 0);
         }
@@ -1090,5 +1150,928 @@ fn zincrby_not_variadic() {
             .arg("c")
             .query(&mut *ctx.con);
         assert!(res.is_err());
+    });
+}
+
+/*
+ test {ZCARD basics} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal 3 [r zcard zkey]
+     r zrem zkey b
+     assert_equal 2 [r zcard zkey]
+     r del zkey
+     assert_equal 0 [r zcard zkey]
+ }
+*/
+#[test]
+fn zcard_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        // TODO: implement GZCARD for module
+        if ctx.fam == Fam::BuiltIn {
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 3);
+        }
+        cmd(&format!("{}REM", ctx.fam.prefix()))
+            .arg("zkey")
+            .arg("b")
+            .query::<i64>(&mut *ctx.con)
+            .unwrap();
+        // TODO: implement GZCARD for module
+        if ctx.fam == Fam::BuiltIn {
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 2);
+            ctx.del("zkey");
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 0);
+        } else {
+            ctx.del("zkey");
+        }
+    });
+}
+
+/*
+ test {ZREM removes key when last element deleted} {
+     r del zkey
+     r zadd zkey 1 a
+     r zrem zkey a
+     assert_equal 0 [r exists zkey]
+ }
+*/
+#[test]
+fn zrem_removes_key_when_last_element_deleted() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.rem("zkey", "a").unwrap();
+        let exists: i32 = cmd("EXISTS").arg("zkey").query(&mut *ctx.con).unwrap();
+        assert_eq!(exists, 0);
+    });
+}
+
+/*
+ test {ZREM variadic} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal 2 [r zrem zkey a b x]
+     assert_equal {c} [r zrange zkey 0 -1]
+ }
+*/
+#[test]
+fn zrem_variadic() {
+    with_families(|ctx| {
+        // TODO: implement variadic GZREM for module
+        // TODO: implement variadic GZREM for module
+        // TODO: implement advanced RANGE options for module
+        // TODO: implement GZREVRANGE for module
+        // TODO: implement WITHSCORE options for module
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            ctx.add("zkey", 3.0, "c").unwrap();
+            let removed: i64 = cmd(&format!("{}REM", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("a")
+                .arg("b")
+                .arg("x")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(removed, 2);
+            let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["c"]);
+        }
+    });
+}
+
+/*
+ test {ZREM variadic removes key when last element deleted} {
+     r del zkey
+     r zadd zkey 1 a 2 b
+     r zrem zkey a b c
+     assert_equal 0 [r exists zkey]
+ }
+*/
+#[test]
+fn zrem_variadic_removes_key_when_last_element_deleted() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            let _ = cmd(&format!("{}REM", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("a")
+                .arg("b")
+                .arg("c")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let exists: i32 = cmd("EXISTS").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGE basics (pos/neg indexes, WITHSCORES)} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal {a b}      [r zrange zkey 0 1]
+     assert_equal {b c}      [r zrange zkey 1 2]
+     assert_equal {b c}      [r zrange zkey -2 -1]
+     assert_equal {a 1 b 2}  [r zrange zkey 0 1 withscores]
+ }
+*/
+#[test]
+fn zrange_basics_pos_neg_withscores() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            ctx.add("zkey", 3.0, "c").unwrap();
+            let r1: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, ["a", "b"]);
+            let r2: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, ["b", "c"]);
+            let r3: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(-2)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r3, ["b", "c"]);
+            let r4: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(1)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r4, ["a", "1", "b", "2"]);
+        }
+    });
+}
+
+/*
+ test {ZREVRANGE basics} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal {c b}     [r zrevrange zkey 0 1]
+     assert_equal {c b a}   [r zrevrange zkey 0 -1]
+     assert_equal {c b 3 2} [r zrevrange zkey 0 1 withscores]
+ }
+*/
+#[test]
+fn zrevrange_basics() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            ctx.add("zkey", 3.0, "c").unwrap();
+            let r1: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, ["c", "b"]);
+            let r2: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, ["c", "b", "a"]);
+            let r3: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg(0)
+                .arg(1)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r3, ["c", "3", "b", "2"]);
+        }
+    });
+}
+
+/*
+ test {ZRANK / ZREVRANK basics & withscore} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal 0 [r zrank zkey a]
+     assert_equal 2 [r zrevrank zkey a]
+     assert_equal {0 1} \
+         [list [r zrank zkey b withscore] [r zscore zkey a]]
+ }
+*/
+#[test]
+fn zrank_and_zrevrank_basics_withscore() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            ctx.add("zkey", 3.0, "c").unwrap();
+            let r1: i64 = cmd(&format!("{}RANK", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, 0);
+            let r2: i64 = cmd(&format!("{}REVRANK", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, 2);
+            let res: (i64, f64) = cmd(&format!("{}RANK", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("b")
+                .arg("WITHSCORE")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, (1, 2.0));
+            let score_a: f64 = cmd(&format!("{}SCORE", ctx.fam.prefix()))
+                .arg("zkey")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(score_a, 1.0);
+        }
+    });
+}
+
+/*
+ test {ZRANK after deletion} {
+     r del zkey
+     r zadd zkey 1 a 2 b
+     r zrem zkey a
+     assert_equal 0 [r zrank zkey b]
+     assert_equal {b} [r zrange zkey 0 -1]
+ }
+*/
+#[test]
+fn zrank_after_deletion() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.rem("zkey", "a").unwrap();
+        let r: i64 = cmd(&format!("{}RANK", ctx.fam.prefix()))
+            .arg("zkey")
+            .arg("b")
+            .query(&mut *ctx.con)
+            .unwrap();
+        assert_eq!(r, 0);
+        let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
+            .arg("zkey")
+            .arg(0)
+            .arg(-1)
+            .query(&mut *ctx.con)
+            .unwrap();
+        assert_eq!(vals, ["b"]);
+    });
+}
+
+/*
+ test {ZINCRBY can create new set} {
+     r del zkey
+     r zincrby zkey 5 a
+     assert_equal {a 5} [r zrange zkey 0 -1 withscores]
+ }
+*/
+#[test]
+fn zincrby_can_create_new_set() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            let _: f64 = cmd("ZINCRBY")
+                .arg("zkey")
+                .arg("5")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("zkey")
+                .arg(0)
+                .arg(-1)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["a", "5"]);
+        }
+    });
+}
+
+/*
+ test {ZINCRBY increment & decrement ordering} {
+     r del zkey
+     r zadd zkey 1 a 2 b
+     r zincrby zkey 5 a
+     r zincrby zkey -3 b
+     assert_equal {b a} [r zrange zkey 0 1]
+ }
+*/
+#[test]
+fn zincrby_increment_and_decrement_ordering() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            cmd("ZINCRBY")
+                .arg("zkey")
+                .arg("5")
+                .arg("a")
+                .query::<f64>(&mut *ctx.con)
+                .unwrap();
+            cmd("ZINCRBY")
+                .arg("zkey")
+                .arg("-3")
+                .arg("b")
+                .query::<f64>(&mut *ctx.con)
+                .unwrap();
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("zkey")
+                .arg(0)
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["b", "a"]);
+        }
+    });
+}
+
+/*
+ test {ZINCRBY return value} {
+     r del zkey
+     assert_equal 5   [r zincrby zkey 5 a]
+     assert_equal 2.5 [r zincrby zkey -2.5 a]
+ }
+*/
+#[test]
+fn zincrby_return_value() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("zkey");
+            let v1: f64 = cmd("ZINCRBY")
+                .arg("zkey")
+                .arg("5")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!((v1 - 5.0).abs() < f64::EPSILON);
+            let v2: f64 = cmd("ZINCRBY")
+                .arg("zkey")
+                .arg("-2.5")
+                .arg("a")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!((v2 - 2.5).abs() < f64::EPSILON);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYSCORE / ZREVRANGEBYSCORE / ZCOUNT basics} {
+     r del zkey
+     for {set i 1} {$i <= 10} {incr i} {
+         r zadd zkey $i m$i
+     }
+     assert_equal {m1 m2 m3} [r zrangebyscore zkey -inf 3]
+     assert_equal {m10 m9 m8} [r zrevrangebyscore zkey +inf 8 limit 0 3]
+     assert_equal 4 [r zcount zkey 7 10]
+ }
+*/
+#[test]
+fn zrangebyscore_and_revrange_and_count_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for i in 1..=10 {
+            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+        }
+        // TODO: implement score-based range commands for module
+        if ctx.fam == Fam::BuiltIn {
+            let r1: Vec<String> = cmd("ZRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("3")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, ["m1", "m2", "m3"]);
+            let r2: Vec<String> = cmd("ZREVRANGEBYSCORE")
+                .arg("zkey")
+                .arg("+inf")
+                .arg("8")
+                .arg("LIMIT")
+                .arg(0)
+                .arg(3)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, ["m10", "m9", "m8"]);
+            let cnt: i64 = cmd("ZCOUNT")
+                .arg("zkey")
+                .arg("7")
+                .arg("10")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(cnt, 4);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYSCORE WITHSCORES} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal {a 1 b 2} [r zrangebyscore zkey -inf 2 withscores]
+ }
+*/
+#[test]
+fn zrangebyscore_withscores() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        // TODO: add WITHSCORES to module range commands
+        // TODO: add LIMIT support to module range commands
+        // TODO: add LIMIT + WITHSCORES support to module
+        if ctx.fam == Fam::BuiltIn {
+            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("2")
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["a", "1", "b", "2"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYSCORE LIMIT} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c 4 d
+     assert_equal {b c} [r zrangebyscore zkey -inf +inf limit 1 2]
+ }
+*/
+#[test]
+fn zrangebyscore_limit() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        ctx.add("zkey", 4.0, "d").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("+inf")
+                .arg("LIMIT")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["b", "c"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYSCORE LIMIT + WITHSCORES} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c 4 d
+     assert_equal {b 2 c 3} \
+         [r zrangebyscore zkey -inf +inf withscores limit 1 2]
+ }
+*/
+#[test]
+fn zrangebyscore_limit_withscores() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        ctx.add("zkey", 4.0, "d").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("+inf")
+                .arg("WITHSCORES")
+                .arg("LIMIT")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["b", "2", "c", "3"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYSCORE invalid min/max -> error} {
+     catch {r zrangebyscore zkey 0 nan} res
+     assert_match {*min or max is not a float*} $res
+ }
+*/
+#[test]
+fn zrangebyscore_invalid_min_max_error() {
+    with_families(|ctx| {
+        // TODO: validate error handling once module supports ZRANGEBYSCORE
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<Vec<String>> = cmd("ZRANGEBYSCORE")
+                .arg("zkey")
+                .arg("0")
+                .arg("nan")
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics} {
+     r del zkey
+     foreach m {a b c d e f} { r zadd zkey 0 $m }
+     assert_equal {a b c} [r zrangebylex zkey [a (d]
+     assert_equal {f e d} [r zrevrangebylex zkey (g [d]
+     assert_equal 3 [r zlexcount zkey [b (e]
+ }
+*/
+#[test]
+fn zrangebylex_revrangebylex_zlexcount_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for m in ["a", "b", "c", "d", "e", "f"] {
+            ctx.add("zkey", 0.0, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let r1: Vec<String> = cmd("ZRANGEBYLEX")
+                .arg("zkey")
+                .arg("[a")
+                .arg("(d")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, ["a", "b", "c"]);
+            let r2: Vec<String> = cmd("ZREVRANGEBYLEX")
+                .arg("zkey")
+                .arg("(g")
+                .arg("[d")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, ["f", "e", "d"]);
+            let count: i64 = cmd("ZLEXCOUNT")
+                .arg("zkey")
+                .arg("[b")
+                .arg("(e")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(count, 3);
+        }
+    });
+}
+
+/*
+ test {ZLEXCOUNT advanced cases} {
+     r del zkey
+     foreach m {a b c d e f} { r zadd zkey 0 $m }
+     assert_equal 6 [r zlexcount zkey - +]
+     assert_equal 0 [r zlexcount zkey (f (f]
+ }
+*/
+#[test]
+fn zlexcount_advanced_cases() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for m in ["a", "b", "c", "d", "e", "f"] {
+            ctx.add("zkey", 0.0, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let c1: i64 = cmd("ZLEXCOUNT")
+                .arg("zkey")
+                .arg("-")
+                .arg("+")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(c1, 6);
+            let c2: i64 = cmd("ZLEXCOUNT")
+                .arg("zkey")
+                .arg("(f")
+                .arg("(f")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(c2, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYLEX LIMIT} {
+     r del zkey
+     foreach m {a b c d e f} { r zadd zkey 0 $m }
+     assert_equal {b c} [r zrangebylex zkey - + limit 1 2]
+ }
+*/
+#[test]
+fn zrangebylex_limit() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for m in ["a", "b", "c", "d", "e", "f"] {
+            ctx.add("zkey", 0.0, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let vals: Vec<String> = cmd("ZRANGEBYLEX")
+                .arg("zkey")
+                .arg("-")
+                .arg("+")
+                .arg("LIMIT")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["b", "c"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGEBYLEX invalid range specifiers} {
+     catch {r zrangebylex zkey foo bar} res
+     assert_match {*wrong number of arguments*} $res
+ }
+*/
+#[test]
+fn zrangebylex_invalid_range_specifiers() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<Vec<String>> = cmd("ZRANGEBYLEX")
+                .arg("zkey")
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+        }
+    });
+}
+
+/*
+ test {ZREMRANGEBYSCORE basics (13 sub-scenarios)} {
+     r del zkey
+     for {set i 1} {$i <= 10} {incr i} { r zadd zkey $i m$i }
+     r zremrangebyscore zkey 1 3
+     assert_equal 7 [r zcard zkey]
+     r zremrangebyscore zkey (8 +inf
+     assert_equal 4 [r zcard zkey]
+     r zremrangebyscore zkey -inf (5
+     assert_equal 2 [r zcard zkey]
+     r zremrangebyscore zkey -inf +inf
+     assert_equal 0 [r exists zkey]
+ }
+*/
+#[test]
+fn zremrangebyscore_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for i in 1..=10 {
+            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            cmd("ZREMRANGEBYSCORE")
+                .arg("zkey")
+                .arg("1")
+                .arg("3")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 7);
+            cmd("ZREMRANGEBYSCORE")
+                .arg("zkey")
+                .arg("8")
+                .arg("+inf")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 4);
+            cmd("ZREMRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("5")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(card, 2);
+            cmd("ZREMRANGEBYSCORE")
+                .arg("zkey")
+                .arg("-inf")
+                .arg("+inf")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let exists: i32 = cmd("EXISTS").arg("zkey").query(&mut *ctx.con).unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZREMRANGEBYSCORE invalid min/max -> error} {
+     catch {r zremrangebyscore zkey foo bar} res
+     assert_match {*min or max is not a float*} $res
+ }
+*/
+#[test]
+fn zremrangebyscore_invalid_min_max_error() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<i64> = cmd("ZREMRANGEBYSCORE")
+                .arg("zkey")
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+        }
+    });
+}
+
+/*
+ test {ZREMRANGEBYRANK basics} {
+     r del zkey
+     for {set i 1} {$i <= 5} {incr i} { r zadd zkey $i m$i }
+     r zremrangebyrank zkey 1 3
+     assert_equal {m1 m5} [r zrange zkey 0 -1]
+ }
+*/
+#[test]
+fn zremrangebyrank_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for i in 1..=5 {
+            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            cmd("ZREMRANGEBYRANK")
+                .arg("zkey")
+                .arg(1)
+                .arg(3)
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("zkey")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["m1", "m5"]);
+        }
+    });
+}
+
+/*
+ test {ZREMRANGEBYLEX basics} {
+     r del zkey
+     foreach m {a b c d e f} { r zadd zkey 0 $m }
+     r zremrangebylex zkey [b (e
+     assert_equal {a e f} [r zrange zkey 0 -1]
+ }
+*/
+#[test]
+fn zremrangebylex_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        for m in ["a", "b", "c", "d", "e", "f"] {
+            ctx.add("zkey", 0.0, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            cmd("ZREMRANGEBYLEX")
+                .arg("zkey")
+                .arg("[b")
+                .arg("(e")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("zkey")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["a", "e", "f"]);
+        }
+    });
+}
+
+/*
+ test {ZUNIONSTORE against non-existing key} {
+     r del foo bar dst
+     r zadd foo 1 a
+     assert_equal 1 [r zunionstore dst 2 foo bar]
+     assert_equal {a} [r zrange dst 0 -1]
+ }
+*/
+#[test]
+fn zunionstore_against_non_existing_key() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            cmd("DEL")
+                .arg("foo")
+                .arg("bar")
+                .arg("dst")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            cmd("ZADD")
+                .arg("foo")
+                .arg("1")
+                .arg("a")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let res: i64 = cmd("ZUNIONSTORE")
+                .arg("dst")
+                .arg(2)
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 1);
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("dst")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["a"]);
+        }
+    });
+}
+
+/*
+ test {ZUNION/ZINTER/ZDIFF/ZINTERCARD against non-existing key} {
+     r del foo bar
+     assert_equal {} [r zunion 2 foo bar]
+     assert_equal {} [r zinter 2 foo bar]
+     assert_equal {} [r zdiff 2 foo bar]
+     assert_equal 0  [r zintercard 2 foo bar]
+ }
+*/
+#[test]
+fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            cmd("DEL")
+                .arg("foo")
+                .arg("bar")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            let u: Vec<String> = cmd("ZUNION")
+                .arg(2)
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!(u.is_empty());
+            let i: Vec<String> = cmd("ZINTER")
+                .arg(2)
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!(i.is_empty());
+            let d: Vec<String> = cmd("ZDIFF")
+                .arg(2)
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!(d.is_empty());
+            let card: i64 = cmd("ZINTERCARD")
+                .arg(2)
+                .arg("foo")
+                .arg("bar")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(card, 0);
+        }
     });
 }
