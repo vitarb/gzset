@@ -17,6 +17,14 @@ impl Fam {
     }
 }
 
+/// Returns "Z<base>" for the built-in family and "GZ<base>" for the module.
+fn zcmd(fam: Fam, base: &str) -> String {
+    match fam {
+        Fam::BuiltIn => format!("Z{base}"),
+        Fam::Module => format!("GZ{base}"),
+    }
+}
+
 /// Execution context for one command‑family and one live connection.
 struct Ctx<'a> {
     fam: Fam,
@@ -30,21 +38,21 @@ impl<'a> Ctx<'a> {
 
     // ───── thin wrappers ────────────────────────────────────────────────────
     fn add(&mut self, key: &str, score: f64, member: &str) -> RedisResult<i64> {
-        cmd(&format!("{}ADD", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "ADD"))
             .arg(key)
             .arg(score.to_string())
             .arg(member)
             .query(&mut *self.con)
     }
     fn range(&mut self, key: &str, start: isize, stop: isize) -> RedisResult<Vec<String>> {
-        cmd(&format!("{}RANGE", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "RANGE"))
             .arg(key)
             .arg(start)
             .arg(stop)
             .query(&mut *self.con)
     }
     fn range_ws(&mut self, key: &str, start: isize, stop: isize) -> RedisResult<Vec<String>> {
-        cmd(&format!("{}RANGE", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "RANGE"))
             .arg(key)
             .arg(start)
             .arg(stop)
@@ -52,25 +60,25 @@ impl<'a> Ctx<'a> {
             .query(&mut *self.con)
     }
     fn rank(&mut self, key: &str, member: &str) -> RedisResult<Option<i64>> {
-        cmd(&format!("{}RANK", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "RANK"))
             .arg(key)
             .arg(member)
             .query(&mut *self.con)
     }
     fn score(&mut self, key: &str, member: &str) -> RedisResult<Option<f64>> {
-        cmd(&format!("{}SCORE", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "SCORE"))
             .arg(key)
             .arg(member)
             .query(&mut *self.con)
     }
     fn rem(&mut self, key: &str, member: &str) -> RedisResult<i64> {
-        cmd(&format!("{}REM", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "REM"))
             .arg(key)
             .arg(member)
             .query(&mut *self.con)
     }
     fn rem_variadic(&mut self, key: &str, members: &[&str]) -> RedisResult<i64> {
-        let mut c = cmd(&format!("{}REM", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "REM"));
         c.arg(key);
         for m in members {
             c.arg(m);
@@ -78,9 +86,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn card(&mut self, key: &str) -> RedisResult<i64> {
-        cmd(&format!("{}CARD", self.fam.prefix()))
-            .arg(key)
-            .query(&mut *self.con)
+        cmd(&zcmd(self.fam, "CARD")).arg(key).query(&mut *self.con)
     }
     fn exists(&mut self, key: &str) -> RedisResult<i64> {
         cmd("EXISTS").arg(key).query(&mut *self.con)
@@ -92,7 +98,7 @@ impl<'a> Ctx<'a> {
         stop: isize,
         withscores: bool,
     ) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}REVRANGE", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "REVRANGE"));
         c.arg(key).arg(start).arg(stop);
         if withscores {
             c.arg("WITHSCORES");
@@ -100,13 +106,13 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn revrank(&mut self, key: &str, member: &str) -> RedisResult<Option<i64>> {
-        cmd(&format!("{}REVRANK", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "REVRANK"))
             .arg(key)
             .arg(member)
             .query(&mut *self.con)
     }
     fn incrby(&mut self, key: &str, incr: f64, member: &str) -> RedisResult<f64> {
-        cmd(&format!("{}INCRBY", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "INCRBY"))
             .arg(key)
             .arg(incr.to_string())
             .arg(member)
@@ -120,7 +126,7 @@ impl<'a> Ctx<'a> {
         withscores: bool,
         limit: Option<(isize, isize)>,
     ) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}RANGEBYSCORE", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "RANGEBYSCORE"));
         c.arg(key).arg(min).arg(max);
         if withscores {
             c.arg("WITHSCORES");
@@ -137,7 +143,7 @@ impl<'a> Ctx<'a> {
         min: &str,
         limit: Option<(isize, isize)>,
     ) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}REVRANGEBYSCORE", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "REVRANGEBYSCORE"));
         c.arg(key).arg(max).arg(min);
         if let Some((off, cnt)) = limit {
             c.arg("LIMIT").arg(off).arg(cnt);
@@ -145,7 +151,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn count(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
-        cmd(&format!("{}COUNT", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "COUNT"))
             .arg(key)
             .arg(min)
             .arg(max)
@@ -158,55 +164,50 @@ impl<'a> Ctx<'a> {
         max: &str,
         limit: Option<(isize, isize)>,
     ) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}RANGEBYLEX", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "RANGEBYLEX"));
         c.arg(key).arg(min).arg(max);
         if let Some((off, cnt)) = limit {
             c.arg("LIMIT").arg(off).arg(cnt);
         }
         c.query(&mut *self.con)
     }
-    fn revrangebylex(
-        &mut self,
-        key: &str,
-        max: &str,
-        min: &str,
-    ) -> RedisResult<Vec<String>> {
-        cmd(&format!("{}REVRANGEBYLEX", self.fam.prefix()))
+    fn revrangebylex(&mut self, key: &str, max: &str, min: &str) -> RedisResult<Vec<String>> {
+        cmd(&zcmd(self.fam, "REVRANGEBYLEX"))
             .arg(key)
             .arg(max)
             .arg(min)
             .query(&mut *self.con)
     }
     fn lexcount(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
-        cmd(&format!("{}LEXCOUNT", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "LEXCOUNT"))
             .arg(key)
             .arg(min)
             .arg(max)
             .query(&mut *self.con)
     }
     fn remrangebyscore(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
-        cmd(&format!("{}REMRANGEBYSCORE", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "REMRANGEBYSCORE"))
             .arg(key)
             .arg(min)
             .arg(max)
             .query(&mut *self.con)
     }
     fn remrangebyrank(&mut self, key: &str, start: isize, stop: isize) -> RedisResult<i64> {
-        cmd(&format!("{}REMRANGEBYRANK", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "REMRANGEBYRANK"))
             .arg(key)
             .arg(start)
             .arg(stop)
             .query(&mut *self.con)
     }
     fn remrangebylex(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
-        cmd(&format!("{}REMRANGEBYLEX", self.fam.prefix()))
+        cmd(&zcmd(self.fam, "REMRANGEBYLEX"))
             .arg(key)
             .arg(min)
             .arg(max)
             .query(&mut *self.con)
     }
     fn unionstore(&mut self, dst: &str, keys: &[&str]) -> RedisResult<i64> {
-        let mut c = cmd(&format!("{}UNIONSTORE", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "UNIONSTORE"));
         c.arg(dst).arg(keys.len());
         for k in keys {
             c.arg(k);
@@ -214,7 +215,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn union(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}UNION", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "UNION"));
         c.arg(keys.len());
         for k in keys {
             c.arg(k);
@@ -222,7 +223,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn inter(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}INTER", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "INTER"));
         c.arg(keys.len());
         for k in keys {
             c.arg(k);
@@ -230,7 +231,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn diff(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
-        let mut c = cmd(&format!("{}DIFF", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "DIFF"));
         c.arg(keys.len());
         for k in keys {
             c.arg(k);
@@ -238,7 +239,7 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
     fn intercard(&mut self, keys: &[&str]) -> RedisResult<i64> {
-        let mut c = cmd(&format!("{}INTERCARD", self.fam.prefix()));
+        let mut c = cmd(&zcmd(self.fam, "INTERCARD"));
         c.arg(keys.len());
         for k in keys {
             c.arg(k);
@@ -1798,7 +1799,11 @@ fn zunionstore_against_non_existing_key() {
 fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
-            cmd("DEL").arg("foo").arg("bar").query::<i64>(&mut *ctx.con).unwrap();
+            cmd("DEL")
+                .arg("foo")
+                .arg("bar")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
             let u = ctx.union(&["foo", "bar"]).unwrap();
             assert!(u.is_empty());
             let i = ctx.inter(&["foo", "bar"]).unwrap();
