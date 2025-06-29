@@ -461,7 +461,7 @@ fn xx_existing_key_no_new_members() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 0);
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 1);
         }
     });
@@ -533,24 +533,10 @@ fn xx_updates_existing_scores() {
             .query::<i64>(&mut *ctx.con);
 
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 3);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                11.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                21.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 11.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 21.0);
         }
     });
 }
@@ -585,32 +571,11 @@ fn gt_updates_when_greater() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 3);
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 4);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                11.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                21.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("z")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                30.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 11.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 21.0);
+            assert_eq!(ctx.score("ztmp", "z").unwrap().unwrap(), 30.0);
         }
     });
 }
@@ -645,32 +610,11 @@ fn lt_updates_when_lower() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 4);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                10.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                20.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("z")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                29.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 10.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 20.0);
+            assert_eq!(ctx.score("ztmp", "z").unwrap().unwrap(), 29.0);
         }
     });
 }
@@ -706,32 +650,11 @@ fn gt_xx_updates_existing_skip_new() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 3);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                11.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                21.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("z")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                30.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 11.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 21.0);
+            assert_eq!(ctx.score("ztmp", "z").unwrap().unwrap(), 30.0);
         }
     });
 }
@@ -767,32 +690,11 @@ fn lt_xx_updates_existing_skip_new() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 1);
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 3);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                10.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                20.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("z")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                29.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 10.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 20.0);
+            assert_eq!(ctx.score("ztmp", "z").unwrap().unwrap(), 29.0);
         }
     });
 }
@@ -830,7 +732,7 @@ fn nx_with_non_existing_key() {
             .query::<i64>(&mut *ctx.con);
 
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD").arg("ztmp").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("ztmp").unwrap();
             assert_eq!(card, 3);
         }
     });
@@ -865,38 +767,10 @@ fn nx_only_add_new_elements() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap(), 2);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                10.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                20.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("a")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                100.0
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("b")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                200.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 10.0);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), 20.0);
+            assert_eq!(ctx.score("ztmp", "a").unwrap().unwrap(), 100.0);
+            assert_eq!(ctx.score("ztmp", "b").unwrap().unwrap(), 200.0);
         }
     });
 }
@@ -971,14 +845,7 @@ fn incr_lt_gt_returns_nil_when_unmodified() {
 
         if ctx.fam == Fam::BuiltIn {
             assert!(res1.unwrap().is_none());
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                28.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 28.0);
             let res2: Option<f64> = cmd("ZADD")
                 .arg("ztmp")
                 .arg("GT")
@@ -988,14 +855,7 @@ fn incr_lt_gt_returns_nil_when_unmodified() {
                 .query(&mut *ctx.con)
                 .unwrap();
             assert!(res2.is_none());
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                28.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 28.0);
         }
     });
 }
@@ -1038,22 +898,8 @@ fn incr_lt_gt_with_infinity() {
                     .unwrap();
                 assert!(res.is_none());
             }
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                f64::INFINITY
-            );
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("y")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                f64::NEG_INFINITY
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), f64::INFINITY);
+            assert_eq!(ctx.score("ztmp", "y").unwrap().unwrap(), f64::NEG_INFINITY);
         }
     });
 }
@@ -1081,14 +927,7 @@ fn incr_behaves_like_zincrby() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(res.unwrap().unwrap(), 25.0);
-            assert_eq!(
-                cmd("ZSCORE")
-                    .arg("ztmp")
-                    .arg("x")
-                    .query::<f64>(&mut *ctx.con)
-                    .unwrap(),
-                25.0
-            );
+            assert_eq!(ctx.score("ztmp", "x").unwrap().unwrap(), 25.0);
         }
     });
 }
@@ -1224,13 +1063,7 @@ fn variadic_base_case() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(added, 3);
-            let res: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("myzset")
-                .arg("0")
-                .arg("-1")
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let res = ctx.range_ws("myzset", 0, -1).unwrap();
             assert_eq!(res, ["a", "10", "b", "20", "c", "30"]);
         }
     });
@@ -1265,13 +1098,7 @@ fn variadic_return_value_added() {
 
         if ctx.fam == Fam::BuiltIn {
             assert_eq!(added, 1);
-            let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("myzset")
-                .arg("0")
-                .arg("-1")
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let vals = ctx.range_ws("myzset", 0, -1).unwrap();
             assert_eq!(vals, ["x", "5", "a", "10", "b", "20", "c", "30"]);
         }
     });
