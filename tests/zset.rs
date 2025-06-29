@@ -43,6 +43,14 @@ impl<'a> Ctx<'a> {
             .arg(stop)
             .query(&mut *self.con)
     }
+    fn range_ws(&mut self, key: &str, start: isize, stop: isize) -> RedisResult<Vec<String>> {
+        cmd(&format!("{}RANGE", self.fam.prefix()))
+            .arg(key)
+            .arg(start)
+            .arg(stop)
+            .arg("WITHSCORES")
+            .query(&mut *self.con)
+    }
     fn rank(&mut self, key: &str, member: &str) -> RedisResult<Option<i64>> {
         cmd(&format!("{}RANK", self.fam.prefix()))
             .arg(key)
@@ -60,6 +68,182 @@ impl<'a> Ctx<'a> {
             .arg(key)
             .arg(member)
             .query(&mut *self.con)
+    }
+    fn rem_variadic(&mut self, key: &str, members: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&format!("{}REM", self.fam.prefix()));
+        c.arg(key);
+        for m in members {
+            c.arg(m);
+        }
+        c.query(&mut *self.con)
+    }
+    fn card(&mut self, key: &str) -> RedisResult<i64> {
+        cmd(&format!("{}CARD", self.fam.prefix()))
+            .arg(key)
+            .query(&mut *self.con)
+    }
+    fn exists(&mut self, key: &str) -> RedisResult<i64> {
+        cmd("EXISTS").arg(key).query(&mut *self.con)
+    }
+    fn revrange(
+        &mut self,
+        key: &str,
+        start: isize,
+        stop: isize,
+        withscores: bool,
+    ) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}REVRANGE", self.fam.prefix()));
+        c.arg(key).arg(start).arg(stop);
+        if withscores {
+            c.arg("WITHSCORES");
+        }
+        c.query(&mut *self.con)
+    }
+    fn revrank(&mut self, key: &str, member: &str) -> RedisResult<Option<i64>> {
+        cmd(&format!("{}REVRANK", self.fam.prefix()))
+            .arg(key)
+            .arg(member)
+            .query(&mut *self.con)
+    }
+    fn incrby(&mut self, key: &str, incr: f64, member: &str) -> RedisResult<f64> {
+        cmd(&format!("{}INCRBY", self.fam.prefix()))
+            .arg(key)
+            .arg(incr.to_string())
+            .arg(member)
+            .query(&mut *self.con)
+    }
+    fn rangebyscore(
+        &mut self,
+        key: &str,
+        min: &str,
+        max: &str,
+        withscores: bool,
+        limit: Option<(isize, isize)>,
+    ) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}RANGEBYSCORE", self.fam.prefix()));
+        c.arg(key).arg(min).arg(max);
+        if withscores {
+            c.arg("WITHSCORES");
+        }
+        if let Some((off, cnt)) = limit {
+            c.arg("LIMIT").arg(off).arg(cnt);
+        }
+        c.query(&mut *self.con)
+    }
+    fn revrangebyscore(
+        &mut self,
+        key: &str,
+        max: &str,
+        min: &str,
+        limit: Option<(isize, isize)>,
+    ) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}REVRANGEBYSCORE", self.fam.prefix()));
+        c.arg(key).arg(max).arg(min);
+        if let Some((off, cnt)) = limit {
+            c.arg("LIMIT").arg(off).arg(cnt);
+        }
+        c.query(&mut *self.con)
+    }
+    fn count(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
+        cmd(&format!("{}COUNT", self.fam.prefix()))
+            .arg(key)
+            .arg(min)
+            .arg(max)
+            .query(&mut *self.con)
+    }
+    fn rangebylex(
+        &mut self,
+        key: &str,
+        min: &str,
+        max: &str,
+        limit: Option<(isize, isize)>,
+    ) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}RANGEBYLEX", self.fam.prefix()));
+        c.arg(key).arg(min).arg(max);
+        if let Some((off, cnt)) = limit {
+            c.arg("LIMIT").arg(off).arg(cnt);
+        }
+        c.query(&mut *self.con)
+    }
+    fn revrangebylex(
+        &mut self,
+        key: &str,
+        max: &str,
+        min: &str,
+    ) -> RedisResult<Vec<String>> {
+        cmd(&format!("{}REVRANGEBYLEX", self.fam.prefix()))
+            .arg(key)
+            .arg(max)
+            .arg(min)
+            .query(&mut *self.con)
+    }
+    fn lexcount(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
+        cmd(&format!("{}LEXCOUNT", self.fam.prefix()))
+            .arg(key)
+            .arg(min)
+            .arg(max)
+            .query(&mut *self.con)
+    }
+    fn remrangebyscore(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
+        cmd(&format!("{}REMRANGEBYSCORE", self.fam.prefix()))
+            .arg(key)
+            .arg(min)
+            .arg(max)
+            .query(&mut *self.con)
+    }
+    fn remrangebyrank(&mut self, key: &str, start: isize, stop: isize) -> RedisResult<i64> {
+        cmd(&format!("{}REMRANGEBYRANK", self.fam.prefix()))
+            .arg(key)
+            .arg(start)
+            .arg(stop)
+            .query(&mut *self.con)
+    }
+    fn remrangebylex(&mut self, key: &str, min: &str, max: &str) -> RedisResult<i64> {
+        cmd(&format!("{}REMRANGEBYLEX", self.fam.prefix()))
+            .arg(key)
+            .arg(min)
+            .arg(max)
+            .query(&mut *self.con)
+    }
+    fn unionstore(&mut self, dst: &str, keys: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&format!("{}UNIONSTORE", self.fam.prefix()));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
+    }
+    fn union(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}UNION", self.fam.prefix()));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
+    }
+    fn inter(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}INTER", self.fam.prefix()));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
+    }
+    fn diff(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&format!("{}DIFF", self.fam.prefix()));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
+    }
+    fn intercard(&mut self, keys: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&format!("{}INTERCARD", self.fam.prefix()));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
     }
 
     // helpers used in tests
@@ -1171,9 +1355,8 @@ fn zcard_basics() {
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         ctx.add("zkey", 3.0, "c").unwrap();
-        // TODO: implement GZCARD for module
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 3);
         }
         cmd(&format!("{}REM", ctx.fam.prefix()))
@@ -1181,12 +1364,11 @@ fn zcard_basics() {
             .arg("b")
             .query::<i64>(&mut *ctx.con)
             .unwrap();
-        // TODO: implement GZCARD for module
         if ctx.fam == Fam::BuiltIn {
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 2);
             ctx.del("zkey");
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 0);
         } else {
             ctx.del("zkey");
@@ -1234,20 +1416,9 @@ fn zrem_variadic() {
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
             ctx.add("zkey", 3.0, "c").unwrap();
-            let removed: i64 = cmd(&format!("{}REM", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg("a")
-                .arg("b")
-                .arg("x")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let removed = ctx.rem_variadic("zkey", &["a", "b", "x"]).unwrap();
             assert_eq!(removed, 2);
-            let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let vals = ctx.range("zkey", 0, -1).unwrap();
             assert_eq!(vals, ["c"]);
         }
     });
@@ -1268,14 +1439,8 @@ fn zrem_variadic_removes_key_when_last_element_deleted() {
             ctx.del("zkey");
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
-            let _ = cmd(&format!("{}REM", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg("a")
-                .arg("b")
-                .arg("c")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let exists: i32 = cmd("EXISTS").arg("zkey").query(&mut *ctx.con).unwrap();
+            ctx.rem_variadic("zkey", &["a", "b", "c"]).unwrap();
+            let exists = ctx.exists("zkey").unwrap();
             assert_eq!(exists, 0);
         }
     });
@@ -1299,34 +1464,13 @@ fn zrange_basics_pos_neg_withscores() {
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
             ctx.add("zkey", 3.0, "c").unwrap();
-            let r1: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r1 = ctx.range("zkey", 0, 1).unwrap();
             assert_eq!(r1, ["a", "b"]);
-            let r2: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(1)
-                .arg(2)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r2 = ctx.range("zkey", 1, 2).unwrap();
             assert_eq!(r2, ["b", "c"]);
-            let r3: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(-2)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r3 = ctx.range("zkey", -2, -1).unwrap();
             assert_eq!(r3, ["b", "c"]);
-            let r4: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(1)
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r4 = ctx.range_ws("zkey", 0, 1).unwrap();
             assert_eq!(r4, ["a", "1", "b", "2"]);
         }
     });
@@ -1349,27 +1493,11 @@ fn zrevrange_basics() {
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
             ctx.add("zkey", 3.0, "c").unwrap();
-            let r1: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r1 = ctx.revrange("zkey", 0, 1, false).unwrap();
             assert_eq!(r1, ["c", "b"]);
-            let r2: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r2 = ctx.revrange("zkey", 0, -1, false).unwrap();
             assert_eq!(r2, ["c", "b", "a"]);
-            let r3: Vec<String> = cmd(&format!("{}REVRANGE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg(0)
-                .arg(1)
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r3 = ctx.revrange("zkey", 0, 1, true).unwrap();
             assert_eq!(r3, ["c", "3", "b", "2"]);
         }
     });
@@ -1393,17 +1521,9 @@ fn zrank_and_zrevrank_basics_withscore() {
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
             ctx.add("zkey", 3.0, "c").unwrap();
-            let r1: i64 = cmd(&format!("{}RANK", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r1 = ctx.rank("zkey", "a").unwrap().unwrap();
             assert_eq!(r1, 0);
-            let r2: i64 = cmd(&format!("{}REVRANK", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r2 = ctx.revrank("zkey", "a").unwrap().unwrap();
             assert_eq!(r2, 2);
             let res: (i64, f64) = cmd(&format!("{}RANK", ctx.fam.prefix()))
                 .arg("zkey")
@@ -1412,11 +1532,7 @@ fn zrank_and_zrevrank_basics_withscore() {
                 .query(&mut *ctx.con)
                 .unwrap();
             assert_eq!(res, (1, 2.0));
-            let score_a: f64 = cmd(&format!("{}SCORE", ctx.fam.prefix()))
-                .arg("zkey")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let score_a = ctx.score("zkey", "a").unwrap().unwrap();
             assert_eq!(score_a, 1.0);
         }
     });
@@ -1438,18 +1554,9 @@ fn zrank_after_deletion() {
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         ctx.rem("zkey", "a").unwrap();
-        let r: i64 = cmd(&format!("{}RANK", ctx.fam.prefix()))
-            .arg("zkey")
-            .arg("b")
-            .query(&mut *ctx.con)
-            .unwrap();
+        let r = ctx.rank("zkey", "b").unwrap().unwrap();
         assert_eq!(r, 0);
-        let vals: Vec<String> = cmd(&format!("{}RANGE", ctx.fam.prefix()))
-            .arg("zkey")
-            .arg(0)
-            .arg(-1)
-            .query(&mut *ctx.con)
-            .unwrap();
+        let vals = ctx.range("zkey", 0, -1).unwrap();
         assert_eq!(vals, ["b"]);
     });
 }
@@ -1466,19 +1573,8 @@ fn zincrby_can_create_new_set() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
             ctx.del("zkey");
-            let _: f64 = cmd("ZINCRBY")
-                .arg("zkey")
-                .arg("5")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
-            let vals: Vec<String> = cmd("ZRANGE")
-                .arg("zkey")
-                .arg(0)
-                .arg(-1)
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            ctx.incrby("zkey", 5.0, "a").unwrap();
+            let vals = ctx.range_ws("zkey", 0, -1).unwrap();
             assert_eq!(vals, ["a", "5"]);
         }
     });
@@ -1500,24 +1596,9 @@ fn zincrby_increment_and_decrement_ordering() {
             ctx.del("zkey");
             ctx.add("zkey", 1.0, "a").unwrap();
             ctx.add("zkey", 2.0, "b").unwrap();
-            cmd("ZINCRBY")
-                .arg("zkey")
-                .arg("5")
-                .arg("a")
-                .query::<f64>(&mut *ctx.con)
-                .unwrap();
-            cmd("ZINCRBY")
-                .arg("zkey")
-                .arg("-3")
-                .arg("b")
-                .query::<f64>(&mut *ctx.con)
-                .unwrap();
-            let vals: Vec<String> = cmd("ZRANGE")
-                .arg("zkey")
-                .arg(0)
-                .arg(1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            ctx.incrby("zkey", 5.0, "a").unwrap();
+            ctx.incrby("zkey", -3.0, "b").unwrap();
+            let vals = ctx.range("zkey", 0, 1).unwrap();
             assert_eq!(vals, ["b", "a"]);
         }
     });
@@ -1535,19 +1616,9 @@ fn zincrby_return_value() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
             ctx.del("zkey");
-            let v1: f64 = cmd("ZINCRBY")
-                .arg("zkey")
-                .arg("5")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let v1 = ctx.incrby("zkey", 5.0, "a").unwrap();
             assert!((v1 - 5.0).abs() < f64::EPSILON);
-            let v2: f64 = cmd("ZINCRBY")
-                .arg("zkey")
-                .arg("-2.5")
-                .arg("a")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let v2 = ctx.incrby("zkey", -2.5, "a").unwrap();
             assert!((v2 - 2.5).abs() < f64::EPSILON);
         }
     });
@@ -1573,29 +1644,13 @@ fn zrangebyscore_and_revrange_and_count_basics() {
         }
         // TODO: implement score-based range commands for module
         if ctx.fam == Fam::BuiltIn {
-            let r1: Vec<String> = cmd("ZRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("3")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r1 = ctx.rangebyscore("zkey", "-inf", "3", false, None).unwrap();
             assert_eq!(r1, ["m1", "m2", "m3"]);
-            let r2: Vec<String> = cmd("ZREVRANGEBYSCORE")
-                .arg("zkey")
-                .arg("+inf")
-                .arg("8")
-                .arg("LIMIT")
-                .arg(0)
-                .arg(3)
-                .query(&mut *ctx.con)
+            let r2 = ctx
+                .revrangebyscore("zkey", "+inf", "8", Some((0, 3)))
                 .unwrap();
             assert_eq!(r2, ["m10", "m9", "m8"]);
-            let cnt: i64 = cmd("ZCOUNT")
-                .arg("zkey")
-                .arg("7")
-                .arg("10")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let cnt = ctx.count("zkey", "7", "10").unwrap();
             assert_eq!(cnt, 4);
         }
     });
@@ -1615,17 +1670,8 @@ fn zrangebyscore_withscores() {
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         ctx.add("zkey", 3.0, "c").unwrap();
-        // TODO: add WITHSCORES to module range commands
-        // TODO: add LIMIT support to module range commands
-        // TODO: add LIMIT + WITHSCORES support to module
         if ctx.fam == Fam::BuiltIn {
-            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("2")
-                .arg("WITHSCORES")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let vals = ctx.rangebyscore("zkey", "-inf", "2", true, None).unwrap();
             assert_eq!(vals, ["a", "1", "b", "2"]);
         }
     });
@@ -1647,14 +1693,8 @@ fn zrangebyscore_limit() {
         ctx.add("zkey", 3.0, "c").unwrap();
         ctx.add("zkey", 4.0, "d").unwrap();
         if ctx.fam == Fam::BuiltIn {
-            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("+inf")
-                .arg("LIMIT")
-                .arg(1)
-                .arg(2)
-                .query(&mut *ctx.con)
+            let vals = ctx
+                .rangebyscore("zkey", "-inf", "+inf", false, Some((1, 2)))
                 .unwrap();
             assert_eq!(vals, ["b", "c"]);
         }
@@ -1678,15 +1718,8 @@ fn zrangebyscore_limit_withscores() {
         ctx.add("zkey", 3.0, "c").unwrap();
         ctx.add("zkey", 4.0, "d").unwrap();
         if ctx.fam == Fam::BuiltIn {
-            let vals: Vec<String> = cmd("ZRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("+inf")
-                .arg("WITHSCORES")
-                .arg("LIMIT")
-                .arg(1)
-                .arg(2)
-                .query(&mut *ctx.con)
+            let vals = ctx
+                .rangebyscore("zkey", "-inf", "+inf", true, Some((1, 2)))
                 .unwrap();
             assert_eq!(vals, ["b", "2", "c", "3"]);
         }
@@ -1704,11 +1737,7 @@ fn zrangebyscore_invalid_min_max_error() {
     with_families(|ctx| {
         // TODO: validate error handling once module supports ZRANGEBYSCORE
         if ctx.fam == Fam::BuiltIn {
-            let res: RedisResult<Vec<String>> = cmd("ZRANGEBYSCORE")
-                .arg("zkey")
-                .arg("0")
-                .arg("nan")
-                .query(&mut *ctx.con);
+            let res = ctx.rangebyscore("zkey", "0", "nan", false, None);
             assert!(res.is_err());
         }
     });
@@ -1731,26 +1760,11 @@ fn zrangebylex_revrangebylex_zlexcount_basics() {
             ctx.add("zkey", 0.0, m).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            let r1: Vec<String> = cmd("ZRANGEBYLEX")
-                .arg("zkey")
-                .arg("[a")
-                .arg("(d")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r1 = ctx.rangebylex("zkey", "[a", "(d", None).unwrap();
             assert_eq!(r1, ["a", "b", "c"]);
-            let r2: Vec<String> = cmd("ZREVRANGEBYLEX")
-                .arg("zkey")
-                .arg("(g")
-                .arg("[d")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let r2 = ctx.revrangebylex("zkey", "(g", "[d").unwrap();
             assert_eq!(r2, ["f", "e", "d"]);
-            let count: i64 = cmd("ZLEXCOUNT")
-                .arg("zkey")
-                .arg("[b")
-                .arg("(e")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let count = ctx.lexcount("zkey", "[b", "(e").unwrap();
             assert_eq!(count, 3);
         }
     });
@@ -1772,19 +1786,9 @@ fn zlexcount_advanced_cases() {
             ctx.add("zkey", 0.0, m).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            let c1: i64 = cmd("ZLEXCOUNT")
-                .arg("zkey")
-                .arg("-")
-                .arg("+")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let c1 = ctx.lexcount("zkey", "-", "+").unwrap();
             assert_eq!(c1, 6);
-            let c2: i64 = cmd("ZLEXCOUNT")
-                .arg("zkey")
-                .arg("(f")
-                .arg("(f")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let c2 = ctx.lexcount("zkey", "(f", "(f").unwrap();
             assert_eq!(c2, 0);
         }
     });
@@ -1805,15 +1809,7 @@ fn zrangebylex_limit() {
             ctx.add("zkey", 0.0, m).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            let vals: Vec<String> = cmd("ZRANGEBYLEX")
-                .arg("zkey")
-                .arg("-")
-                .arg("+")
-                .arg("LIMIT")
-                .arg(1)
-                .arg(2)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let vals = ctx.rangebylex("zkey", "-", "+", Some((1, 2))).unwrap();
             assert_eq!(vals, ["b", "c"]);
         }
     });
@@ -1829,11 +1825,7 @@ fn zrangebylex_limit() {
 fn zrangebylex_invalid_range_specifiers() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
-            let res: RedisResult<Vec<String>> = cmd("ZRANGEBYLEX")
-                .arg("zkey")
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con);
+            let res = ctx.rangebylex("zkey", "foo", "bar", None);
             assert!(res.is_err());
         }
     });
@@ -1861,37 +1853,17 @@ fn zremrangebyscore_basics() {
             ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            cmd("ZREMRANGEBYSCORE")
-                .arg("zkey")
-                .arg("1")
-                .arg("3")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            ctx.remrangebyscore("zkey", "1", "3").unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 7);
-            cmd("ZREMRANGEBYSCORE")
-                .arg("zkey")
-                .arg("8")
-                .arg("+inf")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            ctx.remrangebyscore("zkey", "8", "+inf").unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 4);
-            cmd("ZREMRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("5")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let card: i64 = cmd("ZCARD").arg("zkey").query(&mut *ctx.con).unwrap();
+            ctx.remrangebyscore("zkey", "-inf", "5").unwrap();
+            let card = ctx.card("zkey").unwrap();
             assert_eq!(card, 2);
-            cmd("ZREMRANGEBYSCORE")
-                .arg("zkey")
-                .arg("-inf")
-                .arg("+inf")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let exists: i32 = cmd("EXISTS").arg("zkey").query(&mut *ctx.con).unwrap();
+            ctx.remrangebyscore("zkey", "-inf", "+inf").unwrap();
+            let exists = ctx.exists("zkey").unwrap();
             assert_eq!(exists, 0);
         }
     });
@@ -1907,11 +1879,7 @@ fn zremrangebyscore_basics() {
 fn zremrangebyscore_invalid_min_max_error() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
-            let res: RedisResult<i64> = cmd("ZREMRANGEBYSCORE")
-                .arg("zkey")
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con);
+            let res = ctx.remrangebyscore("zkey", "foo", "bar");
             assert!(res.is_err());
         }
     });
@@ -1933,18 +1901,8 @@ fn zremrangebyrank_basics() {
             ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            cmd("ZREMRANGEBYRANK")
-                .arg("zkey")
-                .arg(1)
-                .arg(3)
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let vals: Vec<String> = cmd("ZRANGE")
-                .arg("zkey")
-                .arg(0)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            ctx.remrangebyrank("zkey", 1, 3).unwrap();
+            let vals = ctx.range("zkey", 0, -1).unwrap();
             assert_eq!(vals, ["m1", "m5"]);
         }
     });
@@ -1966,18 +1924,8 @@ fn zremrangebylex_basics() {
             ctx.add("zkey", 0.0, m).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
-            cmd("ZREMRANGEBYLEX")
-                .arg("zkey")
-                .arg("[b")
-                .arg("(e")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let vals: Vec<String> = cmd("ZRANGE")
-                .arg("zkey")
-                .arg(0)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            ctx.remrangebylex("zkey", "[b", "(e").unwrap();
+            let vals = ctx.range("zkey", 0, -1).unwrap();
             assert_eq!(vals, ["a", "e", "f"]);
         }
     });
@@ -2001,26 +1949,10 @@ fn zunionstore_against_non_existing_key() {
                 .arg("dst")
                 .query::<i64>(&mut *ctx.con)
                 .unwrap();
-            cmd("ZADD")
-                .arg("foo")
-                .arg("1")
-                .arg("a")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let res: i64 = cmd("ZUNIONSTORE")
-                .arg("dst")
-                .arg(2)
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con)
-                .unwrap();
+            ctx.add("foo", 1.0, "a").unwrap();
+            let res = ctx.unionstore("dst", &["foo", "bar"]).unwrap();
             assert_eq!(res, 1);
-            let vals: Vec<String> = cmd("ZRANGE")
-                .arg("dst")
-                .arg(0)
-                .arg(-1)
-                .query(&mut *ctx.con)
-                .unwrap();
+            let vals = ctx.range("dst", 0, -1).unwrap();
             assert_eq!(vals, ["a"]);
         }
     });
@@ -2039,38 +1971,14 @@ fn zunionstore_against_non_existing_key() {
 fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
     with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
-            cmd("DEL")
-                .arg("foo")
-                .arg("bar")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let u: Vec<String> = cmd("ZUNION")
-                .arg(2)
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con)
-                .unwrap();
+            cmd("DEL").arg("foo").arg("bar").query::<i64>(&mut *ctx.con).unwrap();
+            let u = ctx.union(&["foo", "bar"]).unwrap();
             assert!(u.is_empty());
-            let i: Vec<String> = cmd("ZINTER")
-                .arg(2)
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let i = ctx.inter(&["foo", "bar"]).unwrap();
             assert!(i.is_empty());
-            let d: Vec<String> = cmd("ZDIFF")
-                .arg(2)
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let d = ctx.diff(&["foo", "bar"]).unwrap();
             assert!(d.is_empty());
-            let card: i64 = cmd("ZINTERCARD")
-                .arg(2)
-                .arg("foo")
-                .arg("bar")
-                .query(&mut *ctx.con)
-                .unwrap();
+            let card = ctx.intercard(&["foo", "bar"]).unwrap();
             assert_eq!(card, 0);
         }
     });
