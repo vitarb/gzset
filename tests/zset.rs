@@ -381,6 +381,22 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
 
+    fn object_encoding(&mut self, key: &str) -> RedisResult<String> {
+        cmd("OBJECT").arg("ENCODING").arg(key).query(&mut *self.con)
+    }
+
+    fn config_get(&mut self, param: &str) -> RedisResult<Vec<String>> {
+        cmd("CONFIG").arg("GET").arg(param).query(&mut *self.con)
+    }
+
+    fn config_set(&mut self, param: &str, value: &str) -> RedisResult<String> {
+        cmd("CONFIG")
+            .arg("SET")
+            .arg(param)
+            .arg(value)
+            .query(&mut *self.con)
+    }
+
     // helpers used in tests
     fn del(&mut self, key: &str) {
         let _: i32 = cmd("DEL").arg(key).query(&mut *self.con).unwrap();
@@ -2642,7 +2658,15 @@ fn zset_commands_in_multi_exec() {
     });
 }
 
-/* ZRANGESTORE basics */
+/*
+ test {ZRANGESTORE basic} {
+     r flushall
+     r zadd z1{t} 1 a 2 b 3 c 4 d
+     set res [r zrangestore z2{t} z1{t} 0 -1]
+     assert_equal $res 4
+     r zrange z2{t} 0 -1 withscores
+ } {a 1 b 2 c 3 d 4}
+*/
 #[test]
 fn zrangestore_basics() {
     with_families(|ctx| {
@@ -2664,7 +2688,13 @@ fn zrangestore_basics() {
     });
 }
 
-/* ZRANGESTORE WITHSCORES */
+/*
+ test {ZRANGESTORE RESP3} {
+     r hello 3
+     assert_equal [r zrange z2{t} 0 -1 withscores] {{a 1.0} {b 2.0} {c 3.0} {d 4.0}}
+     r hello 2
+ }
+*/
 #[test]
 fn zrangestore_withscores() {
     with_families(|ctx| {
@@ -2684,6 +2714,787 @@ fn zrangestore_withscores() {
                 let vals = ctx.range_ws("dst", 0, -1).unwrap();
                 assert_eq!(vals, ["a", "1", "b", "2"]);
             }
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE - src key missing} {
+     set res [r zrangestore z2{t} missing{t} 0 -1]
+     assert_equal $res 0
+     r exists z2{t}
+ } {0}
+*/
+#[test]
+fn zrangestore_src_key_missing() {
+    with_families(|ctx| {
+        ctx.del("dst");
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("dst")
+                .arg("missing")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 0);
+            let exists = ctx.exists("dst").unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE - src key wrong type} {
+     r zadd z2{t} 1 a
+     r set foo{t} bar
+     assert_error "*WRONGTYPE*" {r zrangestore z2{t} foo{t} 0 -1}
+     r zrange z2{t} 0 -1
+ } {a}
+*/
+#[test]
+fn zrangestore_src_key_wrong_type() {
+    with_families(|ctx| {
+        ctx.del("src");
+        ctx.del("foo");
+        ctx.add("src", 1.0, "a").unwrap();
+        cmd("SET")
+            .arg("foo")
+            .arg("bar")
+            .query::<()>(&mut *ctx.con)
+            .unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<i64> = cmd("ZRANGESTORE")
+                .arg("src")
+                .arg("foo")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+            let vals = ctx.range("src", 0, -1).unwrap();
+            assert_eq!(vals, ["a"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE range} {
+     set res [r zrangestore z2{t} z1{t} 1 2]
+     assert_equal $res 2
+     r zrange z2{t} 0 -1 withscores
+ } {b 2 c 3}
+*/
+#[test]
+fn zrangestore_range() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 2);
+            let vals = ctx.range_ws("z2", 0, -1).unwrap();
+            assert_eq!(vals, ["b", "2", "c", "3"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYLEX} {
+     set res [r zrangestore z3{t} z1{t} \[b \[c BYLEX]
+     assert_equal $res 2
+     assert_encoding listpack z3{t}
+     set res [r zrangestore z2{t} z1{t} \[b \[c BYLEX]
+     assert_equal $res 2
+     r zrange z2{t} 0 -1 withscores
+ } {b 2 c 3}
+*/
+#[test]
+fn zrangestore_bylex() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        ctx.del("z3");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res1: i64 = cmd("ZRANGESTORE")
+                .arg("z3")
+                .arg("z1")
+                .arg("[b")
+                .arg("[c")
+                .arg("BYLEX")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res1, 2);
+            let enc = ctx.object_encoding("z3").unwrap();
+            assert_eq!(enc, "listpack");
+            let res2: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg("[b")
+                .arg("[c")
+                .arg("BYLEX")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res2, 2);
+            let vals = ctx.range_ws("z2", 0, -1).unwrap();
+            assert_eq!(vals, ["b", "2", "c", "3"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYSCORE} {
+     set res [r zrangestore z4{t} z1{t} 1 2 BYSCORE]
+     assert_equal $res 2
+     assert_encoding listpack z4{t}
+     set res [r zrangestore z2{t} z1{t} 1 2 BYSCORE]
+     assert_equal $res 2
+     r zrange z2{t} 0 -1 withscores
+ } {a 1 b 2}
+*/
+#[test]
+fn zrangestore_byscore() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        ctx.del("z4");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let r1: i64 = cmd("ZRANGESTORE")
+                .arg("z4")
+                .arg("z1")
+                .arg(1)
+                .arg(2)
+                .arg("BYSCORE")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r1, 2);
+            let enc = ctx.object_encoding("z4").unwrap();
+            assert_eq!(enc, "listpack");
+            let r2: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(1)
+                .arg(2)
+                .arg("BYSCORE")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(r2, 2);
+            let vals = ctx.range_ws("z2", 0, -1).unwrap();
+            assert_eq!(vals, ["a", "1", "b", "2"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYSCORE LIMIT} {
+     set res [r zrangestore z2{t} z1{t} 0 5 BYSCORE LIMIT 0 2]
+     assert_equal $res 2
+     r zrange z2{t} 0 -1 withscores
+ } {a 1 b 2}
+*/
+#[test]
+fn zrangestore_byscore_limit() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(0)
+                .arg(5)
+                .arg("BYSCORE")
+                .arg("LIMIT")
+                .arg(0)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 2);
+            let vals = ctx.range_ws("z2", 0, -1).unwrap();
+            assert_eq!(vals, ["a", "1", "b", "2"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYSCORE REV LIMIT} {
+     set res [r zrangestore z2{t} z1{t} 5 0 BYSCORE REV LIMIT 0 2]
+     assert_equal $res 2
+     r zrange z2{t} 0 -1 withscores
+ } {c 3 d 4}
+*/
+#[test]
+fn zrangestore_byscore_rev_limit() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(5)
+                .arg(0)
+                .arg("BYSCORE")
+                .arg("REV")
+                .arg("LIMIT")
+                .arg(0)
+                .arg(2)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 2);
+            let vals = ctx.range_ws("z2", 0, -1).unwrap();
+            assert_eq!(vals, ["c", "3", "d", "4"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGE BYSCORE REV LIMIT} {
+     r zrange z1{t} 5 0 BYSCORE REV LIMIT 0 2 WITHSCORES
+ } {d 4 c 3}
+*/
+#[test]
+fn zrange_byscore_rev_limit() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let vals: Vec<String> = cmd("ZRANGE")
+                .arg("z1")
+                .arg(5)
+                .arg(0)
+                .arg("BYSCORE")
+                .arg("REV")
+                .arg("LIMIT")
+                .arg(0)
+                .arg(2)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(vals, ["d", "4", "c", "3"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE - empty range} {
+     set res [r zrangestore z2{t} z1{t} 5 6]
+     assert_equal $res 0
+     r exists z2{t}
+ } {0}
+*/
+#[test]
+fn zrangestore_empty_range() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(5)
+                .arg(6)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 0);
+            let exists = ctx.exists("z2").unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYLEX - empty range} {
+     set res [r zrangestore z2{t} z1{t} \[f \[g BYLEX]
+     assert_equal $res 0
+     r exists z2{t}
+ } {0}
+*/
+#[test]
+fn zrangestore_bylex_empty_range() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg("[f")
+                .arg("[g")
+                .arg("BYLEX")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 0);
+            let exists = ctx.exists("z2").unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE BYSCORE - empty range} {
+     set res [r zrangestore z2{t} z1{t} 5 6 BYSCORE]
+     assert_equal $res 0
+     r exists z2{t}
+ } {0}
+*/
+#[test]
+fn zrangestore_byscore_empty_range() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        ctx.del("z2");
+        for (s, m) in &[(1.0, "a"), (2.0, "b"), (3.0, "c"), (4.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(5)
+                .arg(6)
+                .arg("BYSCORE")
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 0);
+            let exists = ctx.exists("z2").unwrap();
+            assert_eq!(exists, 0);
+        }
+    });
+}
+
+/*
+ test {ZRANGE BYLEX} {
+     r zrange z1{t} \[b \[c BYLEX
+ } {b c}
+*/
+#[test]
+fn zrange_bylex() {
+    with_families(|ctx| {
+        ctx.del("z1");
+        for (s, m) in &[(0.0, "a"), (0.0, "b"), (0.0, "c"), (0.0, "d")] {
+            ctx.add("z1", *s, m).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let vals = ctx.rangebylex("z1", "[b", "[c", None).unwrap();
+            assert_eq!(vals, ["b", "c"]);
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE invalid syntax} {
+     catch {r zrangestore z2{t} z1{t} 0 -1 limit 1 2} err
+     assert_match "*syntax*" $err
+     catch {r zrangestore z2{t} z1{t} 0 -1 WITHSCORES} err
+     assert_match "*syntax*" $err
+ }
+*/
+#[test]
+fn zrangestore_invalid_syntax() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let res1: RedisResult<i64> = cmd("ZRANGESTORE")
+                .arg("dst")
+                .arg("src")
+                .arg(0)
+                .arg(-1)
+                .arg("limit")
+                .arg(1)
+                .arg(2)
+                .query(&mut *ctx.con);
+            assert!(res1.is_err());
+            let res2: RedisResult<i64> = cmd("ZRANGESTORE")
+                .arg("dst")
+                .arg("src")
+                .arg(0)
+                .arg(-1)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con);
+            assert!(res2.is_err());
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE with zset-max-listpack-entries 0 #10767 case} {
+     set original_max [lindex [r config get zset-max-listpack-entries] 1]
+     r config set zset-max-listpack-entries 0
+     r del z1{t} z2{t}
+     r zadd z1{t} 1 a
+     assert_encoding skiplist z1{t}
+     assert_equal 1 [r zrangestore z2{t} z1{t} 0 -1]
+     assert_encoding skiplist z2{t}
+     r config set zset-max-listpack-entries $original_max
+ }
+*/
+#[test]
+fn zrangestore_lp_entries_zero_case() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let orig = ctx.config_get("zset-max-listpack-entries").unwrap()[1].clone();
+            ctx.config_set("zset-max-listpack-entries", "0").unwrap();
+            ctx.del("z1");
+            ctx.del("z2");
+            ctx.add("z1", 1.0, "a").unwrap();
+            let enc = ctx.object_encoding("z1").unwrap();
+            assert_eq!(enc, "skiplist");
+            let res: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, 1);
+            let enc2 = ctx.object_encoding("z2").unwrap();
+            assert_eq!(enc2, "skiplist");
+            ctx.config_set("zset-max-listpack-entries", &orig).unwrap();
+        }
+    });
+}
+
+/*
+ test {ZRANGESTORE with zset-max-listpack-entries 1 dst key should use skiplist encoding} {
+     set original_max [lindex [r config get zset-max-listpack-entries] 1]
+     r config set zset-max-listpack-entries 1
+     r del z1{t} z2{t} z3{t}
+     r zadd z1{t} 1 a 2 b
+     assert_equal 1 [r zrangestore z2{t} z1{t} 0 0]
+     assert_encoding listpack z2{t}
+     assert_equal 2 [r zrangestore z3{t} z1{t} 0 1]
+     assert_encoding skiplist z3{t}
+     r config set zset-max-listpack-entries $original_max
+ }
+*/
+#[test]
+fn zrangestore_lp_entries_one_skiplist_dst() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let orig = ctx.config_get("zset-max-listpack-entries").unwrap()[1].clone();
+            ctx.config_set("zset-max-listpack-entries", "1").unwrap();
+            ctx.del("z1");
+            ctx.del("z2");
+            ctx.del("z3");
+            ctx.add("z1", 1.0, "a").unwrap();
+            ctx.add("z1", 2.0, "b").unwrap();
+            let res1: i64 = cmd("ZRANGESTORE")
+                .arg("z2")
+                .arg("z1")
+                .arg(0)
+                .arg(0)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res1, 1);
+            assert_eq!(ctx.object_encoding("z2").unwrap(), "listpack");
+            let res2: i64 = cmd("ZRANGESTORE")
+                .arg("z3")
+                .arg("z1")
+                .arg(0)
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res2, 2);
+            assert_eq!(ctx.object_encoding("z3").unwrap(), "skiplist");
+            ctx.config_set("zset-max-listpack-entries", &orig).unwrap();
+        }
+    });
+}
+
+/*
+ test {zset score double range} {
+     set dblmax 179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.00000000000000000
+     r del zz
+     r zadd zz $dblmax dblmax
+     assert_encoding listpack zz
+     r zscore zz dblmax
+ } {1.7976931348623157e+308}
+*/
+#[test]
+fn zset_score_double_range() {
+    with_families(|ctx| {
+        ctx.del("zz");
+        if ctx.fam == Fam::BuiltIn {
+            let max = f64::MAX;
+            let _: i64 = cmd("ZADD")
+                .arg("zz")
+                .arg(max.to_string())
+                .arg("dblmax")
+                .query(&mut *ctx.con)
+                .unwrap();
+            let enc = ctx.object_encoding("zz").unwrap();
+            assert_eq!(enc, "listpack");
+            let score = ctx.score("zz", "dblmax").unwrap().unwrap();
+            assert_eq!(score, max);
+        }
+    });
+}
+
+/*
+ test {zunionInterDiffGenericCommand acts on SET and ZSET} {
+     r del set_small{t} set_big{t} zset_small{t} zset_big{t} zset_dest{t}
+
+     foreach set_type {intset listpack hashtable} {
+         r config set set-max-intset-entries 512
+         r config set set-max-listpack-entries 128
+         r config set zset-max-listpack-entries 128
+
+         r del set_small{t} set_big{t}
+
+         if {$set_type == "intset"} {
+             r sadd set_small{t} 1 2 3
+             r sadd set_big{t} 1 2 3 4 5
+             assert_encoding intset set_small{t}
+             assert_encoding intset set_big{t}
+         } elseif {$set_type == "listpack"} {
+             r sadd set_small{t} a 1 2 3
+             r sadd set_big{t} a 1 2 3 4 5
+             r srem set_small{t} a
+             r srem set_big{t} a
+             assert_encoding listpack set_small{t}
+             assert_encoding listpack set_big{t}
+         } elseif {$set_type == "hashtable"} {
+             r config set set-max-intset-entries 0
+             r config set set-max-listpack-entries 0
+             r sadd set_small{t} 1 2 3
+             r sadd set_big{t} 1 2 3 4 5
+             assert_encoding hashtable set_small{t}
+             assert_encoding hashtable set_big{t}
+         }
+
+         foreach zset_type {listpack skiplist} {
+             r del zset_small{t} zset_big{t}
+
+             if {$zset_type == "listpack"} {
+                 r zadd zset_small{t} 1 1 2 2 3 3
+                 r zadd zset_big{t} 1 1 2 2 3 3 4 4 5 5
+                 assert_encoding listpack zset_small{t}
+                 assert_encoding listpack zset_big{t}
+             } elseif {$zset_type == "skiplist"} {
+                 r config set zset-max-listpack-entries 0
+                 r zadd zset_small{t} 1 1 2 2 3 3
+                 r zadd zset_big{t} 1 1 2 2 3 3 4 4 5 5
+                 assert_encoding skiplist zset_small{t}
+                 assert_encoding skiplist zset_big{t}
+             }
+
+             foreach {small_or_big set_key zset_key} {
+                 small set_small{t} zset_big{t}
+                 big set_big{t} zset_small{t}
+             } {
+                 assert_equal {1 2 3 4 5} [lsort [r zunion 2 $set_key $zset_key]]
+                 assert_equal {5} [r zunionstore zset_dest{t} 2 $set_key $zset_key]
+                 assert_equal {1 2 3} [lsort [r zinter 2 $set_key $zset_key]]
+                 assert_equal {3} [r zinterstore zset_dest{t} 2 $set_key $zset_key]
+                 assert_equal {3} [r zintercard 2 $set_key $zset_key]
+
+                 if {$small_or_big == "small"} {
+                     assert_equal {} [r zdiff 2 $set_key $zset_key]
+                     assert_equal {0} [r zdiffstore zset_dest{t} 2 $set_key $zset_key]
+                 } else {
+                     assert_equal {4 5} [lsort [r zdiff 2 $set_key $zset_key]]
+                     assert_equal {2} [r zdiffstore zset_dest{t} 2 $set_key $zset_key]
+                 }
+             }
+         }
+     }
+
+     r config set set-max-intset-entries 512
+     r config set set-max-listpack-entries 128
+     r config set zset-max-listpack-entries 128
+ }
+*/
+#[test]
+fn zunion_interdiff_with_sets() {
+    with_families(|ctx| {
+        ctx.del("set_small");
+        ctx.del("set_big");
+        ctx.del("zset_small");
+        ctx.del("zset_big");
+        ctx.del("dest");
+        if ctx.fam == Fam::BuiltIn {
+            cmd("SADD")
+                .arg("set_small")
+                .arg("1")
+                .arg("2")
+                .arg("3")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            cmd("SADD")
+                .arg("set_big")
+                .arg("1")
+                .arg("2")
+                .arg("3")
+                .arg("4")
+                .arg("5")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            for (s, m) in &[(1.0, "1"), (2.0, "2"), (3.0, "3")] {
+                ctx.add("zset_small", *s, m).unwrap();
+            }
+            for (s, m) in &[(1.0, "1"), (2.0, "2"), (3.0, "3"), (4.0, "4"), (5.0, "5")] {
+                ctx.add("zset_big", *s, m).unwrap();
+            }
+
+            let mut union = ctx.union(&["set_small", "zset_big"]).unwrap();
+            union.sort();
+            assert_eq!(union, ["1", "2", "3", "4", "5"]);
+            let res = ctx.unionstore("dest", &["set_small", "zset_big"]).unwrap();
+            assert_eq!(res, 5);
+            let mut inter = ctx.inter(&["set_small", "zset_big"]).unwrap();
+            inter.sort();
+            assert_eq!(inter, ["1", "2", "3"]);
+            let _: i64 = cmd("ZINTERSTORE")
+                .arg("dest")
+                .arg(2)
+                .arg("set_small")
+                .arg("zset_big")
+                .query(&mut *ctx.con)
+                .unwrap();
+            let card = ctx.card("dest").unwrap();
+            assert_eq!(card, 3);
+            let card2 = ctx.intercard(&["set_small", "zset_big"]).unwrap();
+            assert_eq!(card2, 3);
+            let diff = ctx.diff(&["set_small", "zset_big"]).unwrap();
+            assert!(diff.is_empty());
+            let res = ctx.diffstore("dest", &["set_small", "zset_big"]).unwrap();
+            assert_eq!(res, 0);
+
+            let mut union = ctx.union(&["set_big", "zset_small"]).unwrap();
+            union.sort();
+            assert_eq!(union, ["1", "2", "3", "4", "5"]);
+            let res = ctx.unionstore("dest", &["set_big", "zset_small"]).unwrap();
+            assert_eq!(res, 5);
+            let mut inter = ctx.inter(&["set_big", "zset_small"]).unwrap();
+            inter.sort();
+            assert_eq!(inter, ["1", "2", "3"]);
+            let _: i64 = cmd("ZINTERSTORE")
+                .arg("dest")
+                .arg(2)
+                .arg("set_big")
+                .arg("zset_small")
+                .query(&mut *ctx.con)
+                .unwrap();
+            let card = ctx.card("dest").unwrap();
+            assert_eq!(card, 3);
+            let card2 = ctx.intercard(&["set_big", "zset_small"]).unwrap();
+            assert_eq!(card2, 3);
+            let mut diff = ctx.diff(&["set_big", "zset_small"]).unwrap();
+            diff.sort();
+            assert_eq!(diff, ["4", "5"]);
+            let res = ctx.diffstore("dest", &["set_big", "zset_small"]).unwrap();
+            assert_eq!(res, 2);
+        }
+    });
+}
+
+/*
+ foreach type {single multiple single_multiple} {
+     test "ZADD overflows the maximum allowed elements in a listpack - $type" {
+         r del myzset
+
+         set max_entries 64
+         set original_max [lindex [r config get zset-max-listpack-entries] 1]
+         r config set zset-max-listpack-entries $max_entries
+
+         if {$type == "single"} {
+             for {set i 0} {$i < $max_entries} {incr i} { r zadd myzset $i $i }
+         } elseif {$type == "multiple"} {
+             set args {}
+             for {set i 0} {$i < $max_entries * 2} {incr i} { lappend args $i }
+             r zadd myzset {*}$args
+         } elseif {$type == "single_multiple"} {
+             r zadd myzset 1 1
+             set args {}
+             for {set i 0} {$i < $max_entries * 2} {incr i} { lappend args $i }
+             r zadd myzset {*}$args
+         }
+
+         assert_encoding listpack myzset
+         assert_equal $max_entries [r zcard myzset]
+         assert_equal 1 [r zadd myzset 1 b]
+         assert_encoding skiplist myzset
+
+         r config set zset-max-listpack-entries $original_max
+     }
+ }
+*/
+#[test]
+fn zadd_overflows_listpack_limit() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let orig = ctx.config_get("zset-max-listpack-entries").unwrap()[1].clone();
+            ctx.config_set("zset-max-listpack-entries", "64").unwrap();
+            for mode in ["single", "multiple", "single_multiple"] {
+                ctx.del("myzset");
+                match mode {
+                    "single" => {
+                        for i in 0..64 {
+                            ctx.add("myzset", i as f64, &i.to_string()).unwrap();
+                        }
+                    }
+                    "multiple" => {
+                        let mut args: Vec<String> = Vec::new();
+                        for i in 0..128 {
+                            args.push(i.to_string());
+                        }
+                        let mut c = cmd("ZADD");
+                        c.arg("myzset");
+                        for a in &args {
+                            c.arg(a);
+                        }
+                        c.query::<i64>(&mut *ctx.con).unwrap();
+                    }
+                    "single_multiple" => {
+                        ctx.add("myzset", 1.0, "1").unwrap();
+                        let mut args: Vec<String> = Vec::new();
+                        for i in 0..128 {
+                            args.push(i.to_string());
+                        }
+                        let mut c = cmd("ZADD");
+                        c.arg("myzset");
+                        for a in &args {
+                            c.arg(a);
+                        }
+                        c.query::<i64>(&mut *ctx.con).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                let enc = ctx.object_encoding("myzset").unwrap();
+                assert_eq!(enc, "listpack");
+                assert_eq!(ctx.card("myzset").unwrap(), 64);
+                assert_eq!(ctx.add("myzset", 1.0, "b").unwrap(), 1);
+                let enc2 = ctx.object_encoding("myzset").unwrap();
+                assert_eq!(enc2, "skiplist");
+            }
+            ctx.config_set("zset-max-listpack-entries", &orig).unwrap();
         }
     });
 }
