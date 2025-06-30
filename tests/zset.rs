@@ -1745,6 +1745,27 @@ fn zrange_basics_pos_neg_withscores() {
 }
 
 /*
+ test {ZRANGE basics - negative index} {
+     r del zkey
+     r zadd zkey 1 a 2 b 3 c
+     assert_equal {c} [r zrange zkey -1 -1]
+ }
+*/
+#[test]
+fn gzrange_negative_index_module() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::Module {
+            ctx.del("zkey");
+            ctx.add("zkey", 1.0, "a").unwrap();
+            ctx.add("zkey", 2.0, "b").unwrap();
+            ctx.add("zkey", 3.0, "c").unwrap();
+            let r = ctx.range("zkey", -1, -1).unwrap();
+            assert_eq!(r, ["c"]);
+        }
+    });
+}
+
+/*
  test {ZREVRANGE basics} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
