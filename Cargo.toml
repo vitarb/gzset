@@ -18,6 +18,3 @@ redis = "0.25"
 portpicker = "0.1"
 quickcheck = "1"
 
-[package.metadata.cargo-alias]
-integ = "test -- --ignored --nocapture"
-

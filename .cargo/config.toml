@@ -1,2 +1,0 @@
-[alias]
-integ = "test -- --ignored --nocapture"

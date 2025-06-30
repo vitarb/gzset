@@ -5,7 +5,7 @@ Rules for automated agents / contributors
 ## Prerequisites
 - Install Rust toolchain with `rustup`.
 - Ensure `rustfmt` and `clippy` components are installed.
-- Have Valkey binaries (`valkey-server` and `valkey-cli`) in `PATH` for integration tests.
+- Have Valkey binaries (`valkey-server` and `valkey-cli`) in `PATH` for tests.
 
 ## Standard build
 Agents must verify that a plain build succeeds:
@@ -22,15 +22,6 @@ Run the unit test suite:
 ```bash
 cargo test
 ```
-
-## Integration tests
-Integration tests are executed via the cargo alias:
-
-```bash
-cargo integ
-```
-
-This builds `libgzset.so` automatically. Agents must ensure Valkey binaries are in `PATH` so the tests can start a server.
 
 ## Formatting
 Code must be formatted with:
