@@ -34,8 +34,9 @@ cargo fmt -- --check
 Code must pass Clippy without warnings:
 
 ```bash
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings -W clippy::uninlined_format_args
 ```
+- Avoid `format!("foo{}", x)`; use `format!("foo{x}")` to satisfy `clippy::uninlined_format_args`.
 
 ## No unchecked files
 - Ensure `git status --porcelain` shows no changes.

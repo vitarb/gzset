@@ -3,8 +3,8 @@ fn build_so() {
     use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
 
     let candidates = [
-        format!("target/release/{}gzset{}", DLL_PREFIX, DLL_SUFFIX),
-        format!("target/debug/{}gzset{}", DLL_PREFIX, DLL_SUFFIX),
+        format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"),
+        format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"),
     ];
 
     let mut found = candidates.iter().any(|c| std::path::Path::new(c).exists());

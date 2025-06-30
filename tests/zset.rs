@@ -1908,7 +1908,7 @@ fn zrangebyscore_and_revrange_and_count_basics() {
     with_families(|ctx| {
         ctx.del("zkey");
         for i in 1..=10 {
-            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+            ctx.add("zkey", i as f64, &format!("m{i}")).unwrap();
         }
         // TODO: implement score-based range commands for module
         if ctx.fam == Fam::BuiltIn {
@@ -2118,7 +2118,7 @@ fn zremrangebyscore_basics() {
     with_families(|ctx| {
         ctx.del("zkey");
         for i in 1..=10 {
-            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+            ctx.add("zkey", i as f64, &format!("m{i}")).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
             ctx.remrangebyscore("zkey", "1", "3").unwrap();
@@ -2166,7 +2166,7 @@ fn zremrangebyrank_basics() {
     with_families(|ctx| {
         ctx.del("zkey");
         for i in 1..=5 {
-            ctx.add("zkey", i as f64, &format!("m{}", i)).unwrap();
+            ctx.add("zkey", i as f64, &format!("m{i}")).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
             ctx.remrangebyrank("zkey", 1, 3).unwrap();
@@ -2351,7 +2351,7 @@ fn zscan_yields_full_set() {
     with_families(|ctx| {
         ctx.del("scan");
         for i in 0..50 {
-            ctx.add("scan", i as f64, &format!("m{}", i)).unwrap();
+            ctx.add("scan", i as f64, &format!("m{i}")).unwrap();
         }
         if ctx.fam == Fam::BuiltIn {
             let mut cur = 0u64;
