@@ -4,6 +4,49 @@ use std::os::raw::{c_char, c_int, c_void};
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::ffi::CString;
 
+macro_rules! redis_command {
+    (
+        $ctx:expr,
+        $command_name:expr,
+        $command_handler:ident,
+        $command_flags:expr,
+        $firstkey:expr,
+        $lastkey:expr,
+        $keystep:expr
+    ) => {{
+        let name = CString::new($command_name).unwrap();
+        let flags = CString::new($command_flags).unwrap();
+
+        extern "C" fn __do_command(
+            ctx: *mut raw::RedisModuleCtx,
+            argv: *mut *mut raw::RedisModuleString,
+            argc: c_int,
+        ) -> c_int {
+            let context = rm::Context::new(ctx);
+            let args = rm::decode_args(ctx, argv, argc);
+            let response = $command_handler(&context, args);
+            context.reply(response.map(|v| v.into())) as c_int
+        }
+
+        let status = unsafe {
+            raw::RedisModule_CreateCommand.unwrap()(
+                $ctx,
+                name.as_ptr(),
+                Some(__do_command),
+                flags.as_ptr(),
+                $firstkey,
+                $lastkey,
+                $keystep,
+            )
+        };
+        if status == raw::Status::Err as c_int {
+            Err(rm::RedisError::Str("command registration failed"))
+        } else {
+            Ok(())
+        }
+    }};
+}
+
 const REDISMODULE_API_VERSION: c_int = raw::REDISMODULE_APIVER_1 as c_int;
 
 /// Convenient result type used throughout the crate.
@@ -279,16 +322,23 @@ pub unsafe extern "C" fn gzset_on_load(
         }
     }
 
-    if GZSET_TYPE.create_data_type(ctx).is_err() {
+    let result: rm::RedisResult<()> = (|| {
+        if GZSET_TYPE.create_data_type(ctx).is_err() {
+            return Err(rm::RedisError::Str("datatype"));
+        }
+
+        redis_command!(ctx, "GZADD", gzadd, "write fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZRANK", gzrank, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZRANGE", gzrange, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZREM", gzrem, "write fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZSCORE", gzscore, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZCARD", gzcard, "readonly fast", 1, 1, 1)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
         return raw::Status::Err as c_int;
     }
-
-    rm::redis_command!(ctx, "GZADD", gzadd, "write fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZRANK", gzrank, "readonly fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZRANGE", gzrange, "readonly fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZREM", gzrem, "write fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZSCORE", gzscore, "readonly fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZCARD", gzcard, "readonly fast", 1, 1, 1);
 
     raw::Status::Ok as c_int
 }
