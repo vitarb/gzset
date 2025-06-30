@@ -9,12 +9,8 @@ unloaded.
 
 ## Testing
 
-Run `cargo test` for unit tests.
-
-For functional tests with a Valkey instance, run `cargo integ` (or `cargo test -- --ignored`).
-The `cargo integ` alias automatically builds the `libgzset.so` shared library first via
-the `build_module` helper test so that the module is available when the integration
-tests start.
+Run `cargo test` to execute the full test suite. The tests start a Valkey instance and
+automatically build the `libgzset.so` shared library via the `build_module` helper.
 
 ## Contributing
 
