@@ -237,6 +237,18 @@ fn gzscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     Ok(RedisValue::Null)
 }
 
+fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() != 2 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let sets = SETS.lock().unwrap();
+    if let Some(set) = sets.get(&key) {
+        return Ok((set.members.len() as i64).into());
+    }
+    Ok(0i64.into())
+}
+
 /// Module initialization function called by Valkey/Redis on module load.
 ///
 /// # Safety
@@ -270,6 +282,7 @@ pub unsafe extern "C" fn gzset_on_load(
     rm::redis_command!(ctx, "GZRANGE", gzrange, "readonly", 1, 1, 1);
     rm::redis_command!(ctx, "GZREM", gzrem, "write", 1, 1, 1);
     rm::redis_command!(ctx, "GZSCORE", gzscore, "readonly", 1, 1, 1);
+    rm::redis_command!(ctx, "GZCARD", gzcard, "readonly", 1, 1, 1);
 
     raw::Status::Ok as c_int
 }
