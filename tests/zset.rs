@@ -222,6 +222,15 @@ impl<'a> Ctx<'a> {
         }
         c.query(&mut *self.con)
     }
+    fn union_withscores(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&zcmd(self.fam, "UNION"));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("WITHSCORES");
+        c.query(&mut *self.con)
+    }
     fn inter(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
         let mut c = cmd(&zcmd(self.fam, "INTER"));
         c.arg(keys.len());
@@ -238,12 +247,137 @@ impl<'a> Ctx<'a> {
         }
         c.query(&mut *self.con)
     }
+    fn diff_withscores(&mut self, keys: &[&str]) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&zcmd(self.fam, "DIFF"));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("WITHSCORES");
+        c.query(&mut *self.con)
+    }
     fn intercard(&mut self, keys: &[&str]) -> RedisResult<i64> {
         let mut c = cmd(&zcmd(self.fam, "INTERCARD"));
         c.arg(keys.len());
         for k in keys {
             c.arg(k);
         }
+        c.query(&mut *self.con)
+    }
+
+    fn randmember(
+        &mut self,
+        key: &str,
+        count: Option<i64>,
+        withscores: bool,
+    ) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&zcmd(self.fam, "RANDMEMBER"));
+        c.arg(key);
+        if let Some(n) = count {
+            c.arg(n);
+        }
+        if withscores {
+            c.arg("WITHSCORES");
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn popmin(&mut self, key: &str, count: Option<i64>) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&zcmd(self.fam, "POPMIN"));
+        c.arg(key);
+        if let Some(n) = count {
+            c.arg(n);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn popmax(&mut self, key: &str, count: Option<i64>) -> RedisResult<Vec<String>> {
+        let mut c = cmd(&zcmd(self.fam, "POPMAX"));
+        c.arg(key);
+        if let Some(n) = count {
+            c.arg(n);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn mscore(&mut self, key: &str, members: &[&str]) -> RedisResult<Vec<Option<f64>>> {
+        let mut c = cmd(&zcmd(self.fam, "MSCORE"));
+        c.arg(key);
+        for m in members {
+            c.arg(*m);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn scan(&mut self, key: &str, cursor: u64) -> RedisResult<(u64, Vec<String>)> {
+        cmd(&zcmd(self.fam, "SCAN"))
+            .arg(key)
+            .arg(cursor)
+            .query(&mut *self.con)
+    }
+
+    fn unionstore_weights(
+        &mut self,
+        dst: &str,
+        keys: &[&str],
+        weights: &[i32],
+    ) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "UNIONSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("WEIGHTS");
+        for w in weights {
+            c.arg(*w);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn unionstore_aggregate_max(&mut self, dst: &str, keys: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "UNIONSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("AGGREGATE").arg("MAX");
+        c.query(&mut *self.con)
+    }
+
+    fn interstore_weights(
+        &mut self,
+        dst: &str,
+        keys: &[&str],
+        weights: &[i32],
+    ) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "INTERSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("WEIGHTS");
+        for w in weights {
+            c.arg(*w);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn diffstore(&mut self, dst: &str, keys: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "DIFFSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.query(&mut *self.con)
+    }
+
+    fn intercard_limit(&mut self, keys: &[&str], limit: i64) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "INTERCARD"));
+        c.arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("LIMIT").arg(limit);
         c.query(&mut *self.con)
     }
 
@@ -1812,6 +1946,454 @@ fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
             assert!(d.is_empty());
             let card = ctx.intercard(&["foo", "bar"]).unwrap();
             assert_eq!(card, 0);
+        }
+    });
+}
+
+/* ZRANDMEMBER basics */
+#[test]
+fn zrandmember_basics() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let mut vals = ctx.randmember("zkey", Some(3), false).unwrap();
+            vals.sort();
+            assert_eq!(vals, ["a", "b", "c"]);
+        }
+    });
+}
+
+/* ZRANDMEMBER WITHSCORES */
+#[test]
+fn zrandmember_withscores() {
+    use std::collections::HashMap;
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let vals = ctx.randmember("zkey", Some(2), true).unwrap();
+            let mut map = HashMap::new();
+            for pair in vals.chunks(2) {
+                map.insert(pair[0].clone(), pair[1].clone());
+            }
+            assert_eq!(map.get("a"), Some(&"1".to_string()));
+            assert_eq!(map.get("b"), Some(&"2".to_string()));
+        }
+    });
+}
+
+/* ZRANDMEMBER negative count (allow duplicates) */
+#[test]
+fn zrandmember_negative_count_duplicates() {
+    with_families(|ctx| {
+        ctx.del("zkey");
+        ctx.add("zkey", 1.0, "a").unwrap();
+        ctx.add("zkey", 2.0, "b").unwrap();
+        ctx.add("zkey", 3.0, "c").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let vals = ctx.randmember("zkey", Some(-5), false).unwrap();
+            assert_eq!(vals.len(), 5);
+            assert!(vals.iter().all(|v| ["a", "b", "c"].contains(&v.as_str())));
+            let dup = vals
+                .iter()
+                .enumerate()
+                .any(|(i, v)| vals[i + 1..].contains(v));
+            assert!(dup, "expected at least one duplicate");
+        }
+    });
+}
+
+/* ZPOPMIN/ZPOPMAX basics */
+#[test]
+fn zpopmin_zpopmax_basics() {
+    with_families(|ctx| {
+        ctx.del("zk");
+        ctx.add("zk", 1.0, "a").unwrap();
+        ctx.add("zk", 2.0, "b").unwrap();
+        ctx.add("zk", 3.0, "c").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let v1 = ctx.popmin("zk", None).unwrap();
+            assert_eq!(v1, ["a", "1"]);
+            let v2 = ctx.popmax("zk", None).unwrap();
+            assert_eq!(v2, ["c", "3"]);
+        }
+    });
+}
+
+/* ZMSCORE basics */
+#[test]
+fn zmscore_basics() {
+    with_families(|ctx| {
+        ctx.del("ms");
+        ctx.add("ms", 1.0, "a").unwrap();
+        ctx.add("ms", 2.0, "b").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let vals = ctx.mscore("ms", &["a", "b", "c"]).unwrap();
+            assert_eq!(vals, vec![Some(1.0), Some(2.0), None]);
+        }
+    });
+}
+
+/* ZSCAN yields full set */
+#[test]
+fn zscan_yields_full_set() {
+    use std::collections::HashSet;
+    with_families(|ctx| {
+        ctx.del("scan");
+        for i in 0..50 {
+            ctx.add("scan", i as f64, &format!("m{}", i)).unwrap();
+        }
+        if ctx.fam == Fam::BuiltIn {
+            let mut cur = 0u64;
+            let mut items = HashSet::new();
+            loop {
+                let (next, chunk) = ctx.scan("scan", cur).unwrap();
+                for pair in chunk.chunks(2) {
+                    items.insert(pair[0].clone());
+                }
+                if next == 0 {
+                    break;
+                }
+                cur = next;
+            }
+            assert_eq!(items.len(), 50);
+        }
+    });
+}
+
+/* ZUNIONSTORE with WEIGHTS */
+#[test]
+fn zunionstore_with_weights() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("b", 2.0, "x").unwrap();
+            ctx.add("b", 3.0, "y").unwrap();
+            ctx.unionstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
+            let vals = ctx.range_ws("dst", 0, -1).unwrap();
+            assert_eq!(vals, ["x", "8", "y", "9"]);
+        }
+    });
+}
+
+/* ZUNIONSTORE with AGGREGATE MAX */
+#[test]
+fn zunionstore_with_aggregate_max() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("b", 2.0, "x").unwrap();
+            ctx.add("b", 3.0, "y").unwrap();
+            ctx.unionstore_aggregate_max("dst", &["a", "b"]).unwrap();
+            let vals = ctx.range_ws("dst", 0, -1).unwrap();
+            assert_eq!(vals, ["x", "2", "y", "3"]);
+        }
+    });
+}
+
+/* ZINTERSTORE with WEIGHTS */
+#[test]
+fn zinterstore_with_weights() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("a", 2.0, "y").unwrap();
+            ctx.add("b", 3.0, "x").unwrap();
+            ctx.add("b", 4.0, "y").unwrap();
+            ctx.interstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
+            let vals = ctx.range_ws("dst", 0, -1).unwrap();
+            assert_eq!(vals, ["x", "11", "y", "16"]);
+        }
+    });
+}
+
+/* ZDIFFSTORE basic difference */
+#[test]
+fn zdiffstore_basic_difference() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("a", 2.0, "y").unwrap();
+            ctx.add("b", 3.0, "y").unwrap();
+            ctx.diffstore("dst", &["a", "b"]).unwrap();
+            let vals = ctx.range_ws("dst", 0, -1).unwrap();
+            assert_eq!(vals, ["x", "1"]);
+        }
+    });
+}
+
+/* ZINTERCARD with limit */
+#[test]
+fn zintercard_with_limit() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("a", 2.0, "y").unwrap();
+            ctx.add("b", 3.0, "y").unwrap();
+            ctx.add("b", 4.0, "z").unwrap();
+            let card = ctx.intercard_limit(&["a", "b"], 1).unwrap();
+            assert_eq!(card, 1);
+        }
+    });
+}
+
+/* ZADD NX GT combination error */
+#[test]
+fn zadd_nx_gt_combination_error() {
+    with_families(|ctx| {
+        ctx.del("k");
+        let res: RedisResult<i64> = cmd(&zcmd(ctx.fam, "ADD"))
+            .arg("k")
+            .arg("NX")
+            .arg("GT")
+            .arg("1")
+            .arg("a")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+    });
+}
+
+/* ZADD invalid option order */
+#[test]
+fn zadd_invalid_option_order() {
+    with_families(|ctx| {
+        ctx.del("k");
+        let res: RedisResult<i64> = cmd(&zcmd(ctx.fam, "ADD"))
+            .arg("k")
+            .arg("1")
+            .arg("a")
+            .arg("NX")
+            .arg("CH")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+    });
+}
+
+/* ZUNION – WITHSCORES option */
+#[test]
+fn zunion_with_withscores_option() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("b", 2.0, "y").unwrap();
+            let vals = ctx.union_withscores(&["a", "b"]).unwrap();
+            assert_eq!(vals, ["x", "1", "y", "2"]);
+        }
+    });
+}
+
+/* ZINTER – error on missing WEIGHTS count */
+#[test]
+fn zinter_error_missing_weights_count() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<Vec<String>> = cmd("ZINTER")
+                .arg(2)
+                .arg("a")
+                .arg("b")
+                .arg("WEIGHTS")
+                .arg(2)
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+        }
+    });
+}
+
+/* ZDIFF – WITHSCORES basics */
+#[test]
+fn zdiff_withscores_basics() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        if ctx.fam == Fam::BuiltIn {
+            ctx.add("a", 1.0, "x").unwrap();
+            ctx.add("a", 2.0, "y").unwrap();
+            ctx.add("b", 3.0, "y").unwrap();
+            let res = ctx.diff_withscores(&["a", "b"]).unwrap();
+            assert_eq!(res, ["x", "1"]);
+        }
+    });
+}
+
+/* BZPOPMIN blocks & unblocks */
+#[test]
+fn bzpopmin_blocks_unblocks() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("bk");
+            let res: Option<Vec<String>> = cmd("BZPOPMIN")
+                .arg("bk")
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!(res.is_none());
+            ctx.add("bk", 1.0, "a").unwrap();
+            let res: Vec<String> = cmd("BZPOPMIN")
+                .arg("bk")
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert_eq!(res, ["bk", "a", "1"]);
+        }
+    });
+}
+
+/* BZPOPMAX timeout */
+#[test]
+fn bzpopmax_timeout() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            ctx.del("bk");
+            let res: Option<Vec<String>> = cmd("BZPOPMAX")
+                .arg("bk")
+                .arg(1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            assert!(res.is_none());
+        }
+    });
+}
+
+/* ZPOP* against empty key returns nil */
+#[test]
+fn zpop_against_empty_key_returns_nil() {
+    with_families(|ctx| {
+        ctx.del("empty");
+        if ctx.fam == Fam::BuiltIn {
+            let res: Option<Vec<String>> =
+                cmd("ZPOPMIN").arg("empty").query(&mut *ctx.con).unwrap();
+            assert!(res.is_none() || res.as_ref().unwrap().is_empty());
+        }
+    });
+}
+
+/* ZUNIONSTORE / duplicate keys treated once */
+#[test]
+fn zunionstore_duplicate_keys_once() {
+    with_families(|ctx| {
+        ctx.del("foo");
+        ctx.add("foo", 1.0, "a").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let res = ctx.unionstore("dstdup", &["foo", "foo"]).unwrap();
+            assert_eq!(res, 1);
+            let vals = ctx.range("dstdup", 0, -1).unwrap();
+            assert_eq!(vals, ["a"]);
+        }
+    });
+}
+
+/* ZADD INCR + GT + NX incompatibility */
+#[test]
+fn zadd_incr_gt_nx_incompatibility() {
+    with_families(|ctx| {
+        let res: RedisResult<f64> = cmd(&zcmd(ctx.fam, "ADD"))
+            .arg("k")
+            .arg("INCR")
+            .arg("GT")
+            .arg("NX")
+            .arg("1")
+            .arg("a")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+    });
+}
+
+/* ZSET write against a key of wrong type */
+#[test]
+fn zset_write_wrong_type() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            cmd("SET")
+                .arg("foo")
+                .arg("bar")
+                .query::<()>(&mut *ctx.con)
+                .unwrap();
+            let res: RedisResult<i64> = cmd("ZADD")
+                .arg("foo")
+                .arg("1")
+                .arg("a")
+                .query(&mut *ctx.con);
+            assert!(res.is_err());
+        }
+    });
+}
+
+/* ZSET commands in MULTI/EXEC */
+#[test]
+fn zset_commands_in_multi_exec() {
+    with_families(|ctx| {
+        if ctx.fam == Fam::BuiltIn {
+            let _: () = cmd("MULTI").query(&mut *ctx.con).unwrap();
+            cmd("ZADD")
+                .arg("trans")
+                .arg("1")
+                .arg("a")
+                .query::<()>(&mut *ctx.con)
+                .unwrap();
+            let res: Vec<redis::Value> = cmd("EXEC").query(&mut *ctx.con).unwrap();
+            assert_eq!(res.len(), 1);
+        }
+    });
+}
+
+/* ZRANGESTORE basics */
+#[test]
+fn zrangestore_basics() {
+    with_families(|ctx| {
+        ctx.del("src");
+        ctx.del("dst");
+        ctx.add("src", 1.0, "a").unwrap();
+        ctx.add("src", 2.0, "b").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let _: i64 = cmd("ZRANGESTORE")
+                .arg("dst")
+                .arg("src")
+                .arg(0)
+                .arg(-1)
+                .query(&mut *ctx.con)
+                .unwrap();
+            let vals = ctx.range("dst", 0, -1).unwrap();
+            assert_eq!(vals, ["a", "b"]);
+        }
+    });
+}
+
+/* ZRANGESTORE WITHSCORES */
+#[test]
+fn zrangestore_withscores() {
+    with_families(|ctx| {
+        ctx.del("src");
+        ctx.del("dst");
+        ctx.add("src", 1.0, "a").unwrap();
+        ctx.add("src", 2.0, "b").unwrap();
+        if ctx.fam == Fam::BuiltIn {
+            let res: RedisResult<i64> = cmd("ZRANGESTORE")
+                .arg("dst")
+                .arg("src")
+                .arg(0)
+                .arg(-1)
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con);
+            if res.is_ok() {
+                let vals = ctx.range_ws("dst", 0, -1).unwrap();
+                assert_eq!(vals, ["a", "1", "b", "2"]);
+            }
         }
     });
 }
