@@ -416,6 +416,18 @@ where
 
 // ───────────────────────────── Category‑1 tests ─────────────────────────────
 
+/*
+ test "ZSET basic ZADD and score update - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x
+     r zadd ztmp 20 y
+     r zadd ztmp 30 z
+     assert_equal {x y z} [r zrange ztmp 0 -1]
+
+     r zadd ztmp 1 y
+     assert_equal {y x z} [r zrange ztmp 0 -1]
+ }
+*/
 #[test]
 fn basic_add_and_range_order() {
     with_families(|ctx| {
@@ -431,6 +443,20 @@ fn basic_add_and_range_order() {
     });
 }
 
+/*
+ test "ZRANK/ZREVRANK basics - $encoding" {
+     r del zranktmp
+     r zadd zranktmp 10 x
+     r zadd zranktmp 20 y
+     r zadd zranktmp 30 z
+     assert_equal 0 [r zrank zranktmp x]
+     assert_equal 1 [r zrank zranktmp y]
+     assert_equal 2 [r zrank zranktmp z]
+     assert_equal 2 [r zrevrank zranktmp x]
+     assert_equal 1 [r zrevrank zranktmp y]
+     assert_equal 0 [r zrevrank zranktmp z]
+ }
+*/
 #[test]
 fn rank_and_score() {
     with_families(|ctx| {
@@ -447,6 +473,19 @@ fn rank_and_score() {
     });
 }
 
+/*
+ test "ZREM removes key after last element is removed - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x
+     r zadd ztmp 20 y
+
+     assert_equal 1 [r exists ztmp]
+     assert_equal 0 [r zrem ztmp z]
+     assert_equal 1 [r zrem ztmp y]
+     assert_equal 1 [r zrem ztmp x]
+     assert_equal 0 [r exists ztmp]
+ }
+*/
 #[test]
 fn removal_and_key_destroy() {
     with_families(|ctx| {
@@ -457,6 +496,11 @@ fn removal_and_key_destroy() {
     });
 }
 
+/*
+ test "ZSET element can't be set to NaN with ZADD - $encoding" {
+     assert_error "*not*float*" {r zadd myzset nan abc}
+ }
+*/
 #[test]
 fn rejects_nan_scores() {
     with_families(|ctx| {
@@ -472,6 +516,13 @@ fn rejects_nan_scores() {
 
 /// ZADD XX with non‑existing key should not create it (built‑in behaviour).
 /// The module does not implement XX yet – we accept either `Err` or 0.
+/*
+ test "ZADD XX option without key - $encoding" {
+     r del ztmp
+     assert {[r zadd ztmp xx 10 x] == 0}
+     assert {[r type ztmp] eq {none}}
+ }
+*/
 #[test]
 fn xx_without_key() {
     with_families(|ctx| {
@@ -500,6 +551,11 @@ fn xx_without_key() {
 
 /// Variadic ZADD – core behaviour check only for built‑in ZSET for now.
 /// For the module we ignore the return value so the test still passes.
+/*
+ test "ZADD - Return value is the number of actually added items - $encoding" {
+     list [r zadd myzset 5 x 20 b 30 c] [r zrange myzset 0 -1 withscores]
+ } {1 {x 5 a 10 b 20 c 30}}
+*/
 #[test]
 fn variadic_add_return_value() {
     with_families(|ctx| {
@@ -534,6 +590,13 @@ fn variadic_add_return_value() {
 // ----- ZADD option matrix tests -----
 
 // ZADD with options syntax error with incomplete pair
+/*
+ test "ZADD with options syntax error with incomplete pair - $encoding" {
+     r del ztmp
+     catch {r zadd ztmp xx 10 x 20} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn options_incomplete_pair_error() {
     with_families(|ctx| {
@@ -550,6 +613,13 @@ fn options_incomplete_pair_error() {
 }
 
 // ZADD XX option without key returns 0
+/*
+ test "ZADD XX option without key - $encoding" {
+     r del ztmp
+     assert {[r zadd ztmp xx 10 x] == 0}
+     assert {[r type ztmp] eq {none}}
+ }
+*/
 #[test]
 fn xx_without_key_new_test() {
     with_families(|ctx| {
@@ -575,6 +645,14 @@ fn xx_without_key_new_test() {
 }
 
 // ZADD XX existing key does not add new members
+/*
+ test "ZADD XX existing key - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x
+     assert {[r zadd ztmp xx 20 y] == 0}
+     assert {[r zcard ztmp] == 1}
+ }
+*/
 #[test]
 fn xx_existing_key_no_new_members() {
     with_families(|ctx| {
@@ -603,6 +681,14 @@ fn xx_existing_key_no_new_members() {
 }
 
 // ZADD XX return value is number actually added
+/*
+ test "ZADD XX returns the number of elements actually added - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x
+     set retval [r zadd ztmp 10 x 20 y 30 z]
+     assert {$retval == 2}
+ }
+*/
 #[test]
 fn xx_return_value_added_count() {
     with_families(|ctx| {
@@ -631,6 +717,16 @@ fn xx_return_value_added_count() {
 }
 
 // ZADD XX updates scores of existing members
+/*
+ test "ZADD XX updates existing elements score - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     r zadd ztmp xx 5 foo 11 x 21 y 40 zap
+     assert {[r zcard ztmp] == 3}
+     assert {[r zscore ztmp x] == 11}
+     assert {[r zscore ztmp y] == 21}
+ }
+*/
 #[test]
 fn xx_updates_existing_scores() {
     with_families(|ctx| {
@@ -677,6 +773,17 @@ fn xx_updates_existing_scores() {
 }
 
 // ZADD GT updates existing elements when new scores are greater
+/*
+ test "ZADD GT updates existing elements when new scores are greater - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp gt ch 5 foo 11 x 21 y 29 z] == 3}
+     assert {[r zcard ztmp] == 4}
+     assert {[r zscore ztmp x] == 11}
+     assert {[r zscore ztmp y] == 21}
+     assert {[r zscore ztmp z] == 30}
+ }
+*/
 #[test]
 fn gt_updates_when_greater() {
     with_families(|ctx| {
@@ -716,6 +823,17 @@ fn gt_updates_when_greater() {
 }
 
 // ZADD LT updates existing elements when new scores are lower
+/*
+ test "ZADD LT updates existing elements when new scores are lower - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp lt ch 5 foo 11 x 21 y 29 z] == 2}
+     assert {[r zcard ztmp] == 4}
+     assert {[r zscore ztmp x] == 10}
+     assert {[r zscore ztmp y] == 20}
+     assert {[r zscore ztmp z] == 29}
+ }
+*/
 #[test]
 fn lt_updates_when_lower() {
     with_families(|ctx| {
@@ -755,6 +873,17 @@ fn lt_updates_when_lower() {
 }
 
 // ZADD GT XX updates existing elements when new scores are greater and skips new elements
+/*
+ test "ZADD GT XX updates existing elements when new scores are greater and skips new elements - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp gt xx ch 5 foo 11 x 21 y 29 z] == 2}
+     assert {[r zcard ztmp] == 3}
+     assert {[r zscore ztmp x] == 11}
+     assert {[r zscore ztmp y] == 21}
+     assert {[r zscore ztmp z] == 30}
+ }
+*/
 #[test]
 fn gt_xx_updates_existing_skip_new() {
     with_families(|ctx| {
@@ -795,6 +924,17 @@ fn gt_xx_updates_existing_skip_new() {
 }
 
 // ZADD LT XX updates existing elements when new scores are lower and skips new elements
+/*
+ test "ZADD LT XX updates existing elements when new scores are lower and skips new elements - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp lt xx ch 5 foo 11 x 21 y 29 z] == 1}
+     assert {[r zcard ztmp] == 3}
+     assert {[r zscore ztmp x] == 10}
+     assert {[r zscore ztmp y] == 20}
+     assert {[r zscore ztmp z] == 29}
+ }
+*/
 #[test]
 fn lt_xx_updates_existing_skip_new() {
     with_families(|ctx| {
@@ -835,6 +975,13 @@ fn lt_xx_updates_existing_skip_new() {
 }
 
 // ZADD XX and NX are not compatible
+/*
+ test "ZADD XX and NX are not compatible - $encoding" {
+     r del ztmp
+     catch {r zadd ztmp xx nx 10 x} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn xx_and_nx_incompatible() {
     with_families(|ctx| {
@@ -851,6 +998,13 @@ fn xx_and_nx_incompatible() {
 }
 
 // ZADD NX with non existing key
+/*
+ test "ZADD NX with non existing key - $encoding" {
+     r del ztmp
+     r zadd ztmp nx 10 x 20 y 30 z
+     assert {[r zcard ztmp] == 3}
+ }
+*/
 #[test]
 fn nx_with_non_existing_key() {
     with_families(|ctx| {
@@ -874,6 +1028,17 @@ fn nx_with_non_existing_key() {
 }
 
 // ZADD NX only add new elements without updating old ones
+/*
+ test "ZADD NX only add new elements without updating old ones - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp nx 11 x 21 y 100 a 200 b] == 2}
+     assert {[r zscore ztmp x] == 10}
+     assert {[r zscore ztmp y] == 20}
+     assert {[r zscore ztmp a] == 100}
+     assert {[r zscore ztmp b] == 200}
+ }
+*/
 #[test]
 fn nx_only_add_new_elements() {
     with_families(|ctx| {
@@ -911,6 +1076,13 @@ fn nx_only_add_new_elements() {
 }
 
 // ZADD GT and NX are not compatible
+/*
+ test "ZADD GT and NX are not compatible - $encoding" {
+     r del ztmp
+     catch {r zadd ztmp gt nx 10 x} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn gt_and_nx_incompatible() {
     with_families(|ctx| {
@@ -927,6 +1099,13 @@ fn gt_and_nx_incompatible() {
 }
 
 // ZADD LT and NX are not compatible
+/*
+ test "ZADD LT and NX are not compatible - $encoding" {
+     r del ztmp
+     catch {r zadd ztmp lt nx 10 x} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn lt_and_nx_incompatible() {
     with_families(|ctx| {
@@ -943,6 +1122,13 @@ fn lt_and_nx_incompatible() {
 }
 
 // ZADD LT and GT are not compatible
+/*
+ test "ZADD LT and GT are not compatible - $encoding" {
+     r del ztmp
+     catch {r zadd ztmp lt gt 10 x} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn lt_and_gt_incompatible() {
     with_families(|ctx| {
@@ -959,6 +1145,16 @@ fn lt_and_gt_incompatible() {
 }
 
 // ZADD INCR LT/GT replies with nil if score not updated
+/*
+ test "ZADD INCR LT/GT replies with nill if score not updated - $encoding" {
+     r del ztmp
+     r zadd ztmp 28 x
+     assert {[r zadd ztmp lt incr 1 x] eq {}}
+     assert {[r zscore ztmp x] == 28}
+     assert {[r zadd ztmp gt incr -1 x] eq {}}
+     assert {[r zscore ztmp x] == 28}
+ }
+*/
 #[test]
 fn incr_lt_gt_returns_nil_when_unmodified() {
     with_families(|ctx| {
@@ -996,6 +1192,30 @@ fn incr_lt_gt_returns_nil_when_unmodified() {
 }
 
 // ZADD INCR LT/GT with inf
+/*
+ test "ZADD INCR LT/GT with inf - $encoding" {
+     r del ztmp
+     r zadd ztmp +inf x -inf y
+
+     assert {[r zadd ztmp lt incr 1 x] eq {}}
+     assert {[r zscore ztmp x] == inf}
+     assert {[r zadd ztmp gt incr -1 x] eq {}}
+     assert {[r zscore ztmp x] == inf}
+     assert {[r zadd ztmp lt incr -1 x] eq {}}
+     assert {[r zscore ztmp x] == inf}
+     assert {[r zadd ztmp gt incr 1 x] eq {}}
+     assert {[r zscore ztmp x] == inf}
+
+     assert {[r zadd ztmp lt incr 1 y] eq {}}
+     assert {[r zscore ztmp y] == -inf}
+     assert {[r zadd ztmp gt incr -1 y] eq {}}
+     assert {[r zscore ztmp y] == -inf}
+     assert {[r zadd ztmp lt incr -1 y] eq {}}
+     assert {[r zscore ztmp y] == -inf}
+     assert {[r zadd ztmp gt incr 1 y] eq {}}
+     assert {[r zscore ztmp y] == -inf}
+ }
+*/
 #[test]
 fn incr_lt_gt_with_infinity() {
     with_families(|ctx| {
@@ -1040,6 +1260,14 @@ fn incr_lt_gt_with_infinity() {
 }
 
 // ZADD INCR works like ZINCRBY
+/*
+ test "ZADD INCR works like ZINCRBY - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     r zadd ztmp INCR 15 x
+     assert {[r zscore ztmp x] == 25}
+ }
+*/
 #[test]
 fn incr_behaves_like_zincrby() {
     with_families(|ctx| {
@@ -1068,6 +1296,14 @@ fn incr_behaves_like_zincrby() {
 }
 
 // ZADD INCR works with a single score-element pair
+/*
+ test "ZADD INCR works with a single score-element pair - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     catch {r zadd ztmp INCR 15 x 10 y} err
+     set err
+ } {ERR*}
+*/
 #[test]
 fn incr_requires_single_pair() {
     with_families(|ctx| {
@@ -1094,6 +1330,14 @@ fn incr_requires_single_pair() {
 }
 
 // ZADD CH option changes return value to all changed elements
+/*
+ test "ZADD CH option changes return value to all changed elements - $encoding" {
+     r del ztmp
+     r zadd ztmp 10 x 20 y 30 z
+     assert {[r zadd ztmp 11 x 21 y 30 z] == 0}
+     assert {[r zadd ztmp ch 12 x 22 y 30 z] == 2}
+ }
+*/
 #[test]
 fn ch_option_changes_return_value() {
     with_families(|ctx| {
@@ -1136,6 +1380,12 @@ fn ch_option_changes_return_value() {
 }
 
 // ZINCRBY calls leading to NaN result in error
+/*
+ test "ZINCRBY calls leading to NaN result in error - $encoding" {
+     r zincrby myzset +inf abc
+     assert_error "*NaN*" {r zincrby myzset -inf abc}
+ }
+*/
 #[test]
 fn zincrby_nan_error() {
     with_families(|ctx| {
@@ -1159,6 +1409,13 @@ fn zincrby_nan_error() {
 }
 
 // ZINCRBY against invalid incr value
+/*
+ test "ZINCRBY against invalid incr value - $encoding" {
+     r del zincr
+     r zadd zincr 1 "one"
+     assert_error "*value is not a valid*" {r zincrby zincr v "one"}
+ }
+*/
 #[test]
 fn zincrby_invalid_incr_value() {
     with_families(|ctx| {
@@ -1181,6 +1438,12 @@ fn zincrby_invalid_incr_value() {
 }
 
 // ZADD - Variadic version base case
+/*
+ test "ZADD - Variadic version base case - $encoding" {
+     r del myzset
+     list [r zadd myzset 10 a 20 b 30 c] [r zrange myzset 0 -1 withscores]
+ } {3 {a 10 b 20 c 30}}
+*/
 #[test]
 fn variadic_base_case() {
     with_families(|ctx| {
@@ -1205,6 +1468,11 @@ fn variadic_base_case() {
 }
 
 // ZADD - Return value is the number of actually added items
+/*
+ test "ZADD - Return value is the number of actually added items - $encoding" {
+     list [r zadd myzset 5 x 20 b 30 c] [r zrange myzset 0 -1 withscores]
+ } {1 {x 5 a 10 b 20 c 30}}
+*/
 #[test]
 fn variadic_return_value_added() {
     with_families(|ctx| {
@@ -1240,6 +1508,14 @@ fn variadic_return_value_added() {
 }
 
 // ZADD - Variadic version does not add nothing on single parsing err
+/*
+ test "ZADD - Variadic version does not add nothing on single parsing err - $encoding" {
+     r del myzset
+     catch {r zadd myzset 10 a 20 b 30.badscore c} e
+     assert_match {*ERR*not*float*} $e
+     r exists myzset
+ } {0}
+*/
 #[test]
 fn variadic_aborts_on_single_error() {
     with_families(|ctx| {
@@ -1263,6 +1539,13 @@ fn variadic_aborts_on_single_error() {
 }
 
 // ZADD - Variadic version will raise error on missing arg
+/*
+ test "ZADD - Variadic version will raise error on missing arg - $encoding" {
+     r del myzset
+     catch {r zadd myzset 10 a 20 b 30 c 40} e
+     assert_match {*ERR*syntax*} $e
+ }
+*/
 #[test]
 fn variadic_error_on_missing_arg() {
     with_families(|ctx| {
@@ -1282,6 +1565,13 @@ fn variadic_error_on_missing_arg() {
 }
 
 // ZINCRBY does not work variadic even if shares ZADD implementation
+/*
+ test "ZINCRBY does not work variadic even if shares ZADD implementation - $encoding" {
+     r del myzset
+     catch {r zincrby myzset 10 a 20 b 30 c} e
+     assert_match {*ERR*wrong*number*arg*} $e
+ }
+*/
 #[test]
 fn zincrby_not_variadic() {
     with_families(|ctx| {
