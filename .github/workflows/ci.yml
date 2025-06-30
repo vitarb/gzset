@@ -24,5 +24,7 @@ jobs:
       run: cargo fmt -- --check
     - name: Lint
       run: cargo clippy --all-targets -- -D warnings
+    - name: Remove stale release artefacts
+      run: rm -rf target/release
     - name: Test
       run: cargo test --verbose

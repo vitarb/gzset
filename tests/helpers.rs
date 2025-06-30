@@ -1,5 +1,31 @@
 use std::process::{Child, Command};
+use std::{fs, path::Path};
 use std::{thread, time::Duration};
+
+pub fn latest_so_path() -> std::path::PathBuf {
+    use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
+
+    let debug = format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}");
+    let release = format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}");
+
+    if !Path::new(&debug).exists() {
+        assert!(Command::new("cargo")
+            .arg("build")
+            .status()
+            .expect("failed to run cargo build")
+            .success());
+    }
+
+    let meta_dbg = fs::metadata(&debug).unwrap();
+    let meta_rel = fs::metadata(&release).ok();
+
+    match meta_rel {
+        Some(m_rel) if m_rel.modified().unwrap() > meta_dbg.modified().unwrap() => {
+            Path::new(&release).canonicalize().unwrap()
+        }
+        _ => Path::new(&debug).canonicalize().unwrap(),
+    }
+}
 
 pub struct ValkeyInstance {
     pub child: Child,
@@ -7,37 +33,10 @@ pub struct ValkeyInstance {
 }
 
 impl ValkeyInstance {
+    #[allow(dead_code)]
     pub fn start() -> Self {
         let port = portpicker::pick_unused_port().expect("no free ports");
-        let so_path = {
-            use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
-
-            let candidates = [
-                format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"),
-                format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"),
-            ];
-
-            let mut path = candidates
-                .iter()
-                .find(|p| std::path::Path::new(p).exists())
-                .cloned();
-
-            if path.is_none() {
-                let status = Command::new("cargo")
-                    .arg("build")
-                    .status()
-                    .expect("failed to run cargo build");
-                assert!(status.success(), "cargo build failed");
-
-                path = candidates
-                    .iter()
-                    .find(|p| std::path::Path::new(p).exists())
-                    .cloned();
-            }
-
-            let path = path.expect("libgzset.so not built");
-            std::fs::canonicalize(path).unwrap()
-        };
+        let so_path = latest_so_path();
 
         let child = Command::new("valkey-server")
             .arg("--port")
@@ -55,6 +54,7 @@ impl ValkeyInstance {
         Self { child, port }
     }
 
+    #[allow(dead_code)]
     pub fn url(&self) -> String {
         format!("redis://127.0.0.1:{}", self.port)
     }
