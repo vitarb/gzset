@@ -192,8 +192,13 @@ fn gzrange(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].to_string_lossy();
-    let start: isize = args[2].parse_integer()?.try_into().unwrap_or(isize::MAX);
-    let stop: isize = args[3].parse_integer()?.try_into().unwrap_or(isize::MAX);
+    let parse_index = |arg: &RedisString| -> Result<isize> {
+        arg.to_string_lossy()
+            .parse::<isize>()
+            .map_err(|_| RedisError::Str("ERR index is not an integer or out of range"))
+    };
+    let start = parse_index(&args[2])?;
+    let stop = parse_index(&args[3])?;
     let sets = SETS.lock().unwrap();
     if let Some(set) = sets.get(&key) {
         let vals: Vec<RedisValue> = set
@@ -279,11 +284,11 @@ pub unsafe extern "C" fn gzset_on_load(
     }
 
     rm::redis_command!(ctx, "GZADD", gzadd, "write fast", 1, 1, 1);
-    rm::redis_command!(ctx, "GZRANK", gzrank, "readonly", 1, 1, 1);
-    rm::redis_command!(ctx, "GZRANGE", gzrange, "readonly", 1, 1, 1);
-    rm::redis_command!(ctx, "GZREM", gzrem, "write", 1, 1, 1);
-    rm::redis_command!(ctx, "GZSCORE", gzscore, "readonly", 1, 1, 1);
-    rm::redis_command!(ctx, "GZCARD", gzcard, "readonly", 1, 1, 1);
+    rm::redis_command!(ctx, "GZRANK", gzrank, "readonly fast", 1, 1, 1);
+    rm::redis_command!(ctx, "GZRANGE", gzrange, "readonly fast", 1, 1, 1);
+    rm::redis_command!(ctx, "GZREM", gzrem, "write fast", 1, 1, 1);
+    rm::redis_command!(ctx, "GZSCORE", gzscore, "readonly fast", 1, 1, 1);
+    rm::redis_command!(ctx, "GZCARD", gzcard, "readonly fast", 1, 1, 1);
 
     raw::Status::Ok as c_int
 }
