@@ -1,3 +1,4 @@
+#![deny(clippy::uninlined_format_args)]
 use std::os::raw::{c_char, c_int, c_void};
 
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
@@ -330,7 +331,7 @@ mod tests {
     fn negative_indices() {
         let mut set = ScoreSet::default();
         for i in 0..5 {
-            set.insert(i as f64, format!("m{}", i));
+            set.insert(i as f64, format!("m{i}"));
         }
         let out = set.range_iter(-2, -1);
         assert_eq!(out[0].1, "m3");
