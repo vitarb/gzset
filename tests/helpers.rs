@@ -4,12 +4,14 @@ use std::{thread, time::Duration};
 
 pub fn latest_so_path() -> std::path::PathBuf {
     use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let debug = format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}");
-    let release = format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}");
+    let debug = root.join(format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
+    let release = root.join(format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
 
-    if !Path::new(&debug).exists() {
+    if !debug.exists() {
         assert!(Command::new("cargo")
+            .current_dir(root)
             .arg("build")
             .status()
             .expect("failed to run cargo build")
@@ -21,9 +23,9 @@ pub fn latest_so_path() -> std::path::PathBuf {
 
     match meta_rel {
         Some(m_rel) if m_rel.modified().unwrap() > meta_dbg.modified().unwrap() => {
-            Path::new(&release).canonicalize().unwrap()
+            release.canonicalize().unwrap()
         }
-        _ => Path::new(&debug).canonicalize().unwrap(),
+        _ => debug.canonicalize().unwrap(),
     }
 }
 

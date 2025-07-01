@@ -7,24 +7,40 @@ on:
     branches: [ master, main ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        profile: minimal
-        override: true
-    - name: Install Valkey
-      run: sudo apt-get update && sudo apt-get install -y valkey-server valkey-tools
-    - name: Build
-      run: cargo build --all-targets --verbose
-    - name: Format
-      run: cargo fmt -- --check
-    - name: Lint
-      run: cargo clippy --all-targets -- -D warnings
-    - name: Remove stale release artefacts
-      run: rm -rf target/release
-    - name: Test
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - name: Install Valkey
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            choco install valkey -y
+          else
+            sudo apt-get update && sudo apt-get install -y valkey-server valkey-tools
+          fi
+        shell: bash
+      - name: Format
+        run: cargo fmt -- --check
+        shell: bash
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+      - name: Test
+        run: cargo test --all --all-targets --verbose
+        shell: bash
