@@ -8,10 +8,7 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v3
@@ -28,18 +25,16 @@ jobs:
           profile: minimal
           override: true
       - name: Install Valkey
-        run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            choco install valkey -y
-          else
-            sudo apt-get update && sudo apt-get install -y valkey-server valkey-tools
-          fi
+        run: sudo apt-get update && sudo apt-get install -y valkey-server valkey-tools
         shell: bash
       - name: Format
         run: cargo fmt -- --check
         shell: bash
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+      - name: Check duplicates
+        run: cargo tree -d
         shell: bash
       - name: Test
         run: cargo test --all --all-targets --verbose

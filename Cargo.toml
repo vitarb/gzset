@@ -20,10 +20,9 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 portpicker = "0.1"
 redis = "0.25"
+heck = "0.5"
 
 [dev-dependencies]
 quickcheck = "1"
 which = "4"
 
-[alias]
-valkey = "run --bin xtask -- start-valkey"

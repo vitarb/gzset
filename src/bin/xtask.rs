@@ -97,7 +97,7 @@ fn start_valkey(profile: Profile, port_opt: Option<u16>, extra_args: &[String]) 
     let mut child = cmd.spawn().context("failed to start valkey-server")?;
 
     // 5) Wait until server is up (health probe)
-    for _ in 0..20u8 {
+    for _ in 0..50u8 {
         if redis::Client::open(format!("redis://127.0.0.1:{port}"))
             .and_then(|c| c.get_connection())
             .and_then(|mut con| redis::cmd("PING").query::<String>(&mut con))
@@ -116,4 +116,3 @@ fn start_valkey(profile: Profile, port_opt: Option<u16>, extra_args: &[String]) 
     let _ = child.kill();
     anyhow::bail!("valkey-server failed to start");
 }
-
