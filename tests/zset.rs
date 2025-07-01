@@ -1606,7 +1606,7 @@ fn zincrby_not_variadic() {
 }
 
 /*
- test {ZCARD basics} {
+ test {ZCARD basics - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal 3 [r zcard zkey]
@@ -1645,7 +1645,7 @@ fn zcard_basics() {
 }
 
 /*
- test {ZREM removes key when last element deleted} {
+ test {ZREM removes key after last element is removed - $encoding} {
      r del zkey
      r zadd zkey 1 a
      r zrem zkey a
@@ -1664,7 +1664,7 @@ fn zrem_removes_key_when_last_element_deleted() {
 }
 
 /*
- test {ZREM variadic} {
+ test {ZREM variadic version - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal 2 [r zrem zkey a b x]
@@ -1693,7 +1693,7 @@ fn zrem_variadic() {
 }
 
 /*
- test {ZREM variadic removes key when last element deleted} {
+ test {ZREM variadic version -- remove elements after key deletion - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b
      r zrem zkey a b c
@@ -1715,7 +1715,7 @@ fn zrem_variadic_removes_key_when_last_element_deleted() {
 }
 
 /*
- test {ZRANGE basics (pos/neg indexes, WITHSCORES)} {
+ test {ZRANGE basics - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal {a b}      [r zrange zkey 0 1]
@@ -1745,7 +1745,7 @@ fn zrange_basics_pos_neg_withscores() {
 }
 
 /*
- test {ZRANGE basics - negative index} {
+ test {ZRANGE basics - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal {c} [r zrange zkey -1 -1]
@@ -1766,7 +1766,7 @@ fn gzrange_negative_index_module() {
 }
 
 /*
- test {ZREVRANGE basics} {
+ test {ZREVRANGE basics - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal {c b}     [r zrevrange zkey 0 1]
@@ -1793,7 +1793,7 @@ fn zrevrange_basics() {
 }
 
 /*
- test {ZRANK / ZREVRANK basics & withscore} {
+ test {ZRANK/ZREVRANK basics - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal 0 [r zrank zkey a]
@@ -1828,7 +1828,7 @@ fn zrank_and_zrevrank_basics_withscore() {
 }
 
 /*
- test {ZRANK after deletion} {
+ test {ZRANK - after deletion - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b
      r zrem zkey a
@@ -1851,7 +1851,7 @@ fn zrank_after_deletion() {
 }
 
 /*
- test {ZINCRBY can create new set} {
+ test {ZINCRBY - can create a new sorted set - $encoding} {
      r del zkey
      r zincrby zkey 5 a
      assert_equal {a 5} [r zrange zkey 0 -1 withscores]
@@ -1870,7 +1870,7 @@ fn zincrby_can_create_new_set() {
 }
 
 /*
- test {ZINCRBY increment & decrement ordering} {
+ test {ZINCRBY - increment and decrement - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b
      r zincrby zkey 5 a
@@ -1894,7 +1894,7 @@ fn zincrby_increment_and_decrement_ordering() {
 }
 
 /*
- test {ZINCRBY return value} {
+ test {ZINCRBY return value - $encoding} {
      r del zkey
      assert_equal 5   [r zincrby zkey 5 a]
      assert_equal 2.5 [r zincrby zkey -2.5 a]
@@ -1914,7 +1914,7 @@ fn zincrby_return_value() {
 }
 
 /*
- test {ZRANGEBYSCORE / ZREVRANGEBYSCORE / ZCOUNT basics} {
+ test {ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZCOUNT basics - $encoding} {
      r del zkey
      for {set i 1} {$i <= 10} {incr i} {
          r zadd zkey $i m$i
@@ -1946,7 +1946,7 @@ fn zrangebyscore_and_revrange_and_count_basics() {
 }
 
 /*
- test {ZRANGEBYSCORE WITHSCORES} {
+ test {ZRANGEBYSCORE with WITHSCORES - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c
      assert_equal {a 1 b 2} [r zrangebyscore zkey -inf 2 withscores]
@@ -1967,7 +1967,7 @@ fn zrangebyscore_withscores() {
 }
 
 /*
- test {ZRANGEBYSCORE LIMIT} {
+ test {ZRANGEBYSCORE with LIMIT - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c 4 d
      assert_equal {b c} [r zrangebyscore zkey -inf +inf limit 1 2]
@@ -1991,7 +1991,7 @@ fn zrangebyscore_limit() {
 }
 
 /*
- test {ZRANGEBYSCORE LIMIT + WITHSCORES} {
+ test {ZRANGEBYSCORE with LIMIT and WITHSCORES - $encoding} {
      r del zkey
      r zadd zkey 1 a 2 b 3 c 4 d
      assert_equal {b 2 c 3} \
@@ -2016,7 +2016,7 @@ fn zrangebyscore_limit_withscores() {
 }
 
 /*
- test {ZRANGEBYSCORE invalid min/max -> error} {
+ test {ZRANGEBYSCORE with non-value min or max - $encoding} {
      catch {r zrangebyscore zkey 0 nan} res
      assert_match {*min or max is not a float*} $res
  }
@@ -2033,7 +2033,7 @@ fn zrangebyscore_invalid_min_max_error() {
 }
 
 /*
- test {ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics} {
+ test {ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics - $encoding} {
      r del zkey
      foreach m {a b c d e f} { r zadd zkey 0 $m }
      assert_equal {a b c} [r zrangebylex zkey [a (d]
@@ -2060,7 +2060,7 @@ fn zrangebylex_revrangebylex_zlexcount_basics() {
 }
 
 /*
- test {ZLEXCOUNT advanced cases} {
+ test {ZLEXCOUNT advanced - $encoding} {
      r del zkey
      foreach m {a b c d e f} { r zadd zkey 0 $m }
      assert_equal 6 [r zlexcount zkey - +]
@@ -2084,7 +2084,7 @@ fn zlexcount_advanced_cases() {
 }
 
 /*
- test {ZRANGEBYLEX LIMIT} {
+ test {ZRANGEBYLEX with LIMIT - $encoding} {
      r del zkey
      foreach m {a b c d e f} { r zadd zkey 0 $m }
      assert_equal {b c} [r zrangebylex zkey - + limit 1 2]
@@ -2105,7 +2105,7 @@ fn zrangebylex_limit() {
 }
 
 /*
- test {ZRANGEBYLEX invalid range specifiers} {
+ test {ZRANGEBYLEX with invalid lex range specifiers - $encoding} {
      catch {r zrangebylex zkey foo bar} res
      assert_match {*wrong number of arguments*} $res
  }
@@ -2121,7 +2121,7 @@ fn zrangebylex_invalid_range_specifiers() {
 }
 
 /*
- test {ZREMRANGEBYSCORE basics (13 sub-scenarios)} {
+ test {ZREMRANGEBYSCORE basics - $encoding} {
      r del zkey
      for {set i 1} {$i <= 10} {incr i} { r zadd zkey $i m$i }
      r zremrangebyscore zkey 1 3
@@ -2159,7 +2159,7 @@ fn zremrangebyscore_basics() {
 }
 
 /*
- test {ZREMRANGEBYSCORE invalid min/max -> error} {
+ test {ZREMRANGEBYSCORE with non-value min or max - $encoding} {
      catch {r zremrangebyscore zkey foo bar} res
      assert_match {*min or max is not a float*} $res
  }
@@ -2175,7 +2175,7 @@ fn zremrangebyscore_invalid_min_max_error() {
 }
 
 /*
- test {ZREMRANGEBYRANK basics} {
+ test {ZREMRANGEBYRANK basics - $encoding} {
      r del zkey
      for {set i 1} {$i <= 5} {incr i} { r zadd zkey $i m$i }
      r zremrangebyrank zkey 1 3
@@ -2198,7 +2198,7 @@ fn zremrangebyrank_basics() {
 }
 
 /*
- test {ZREMRANGEBYLEX basics} {
+ test {ZREMRANGEBYLEX basics - $encoding} {
      r del zkey
      foreach m {a b c d e f} { r zadd zkey 0 $m }
      r zremrangebylex zkey [b (e
@@ -2221,7 +2221,7 @@ fn zremrangebylex_basics() {
 }
 
 /*
- test {ZUNIONSTORE against non-existing key} {
+ test {ZUNIONSTORE against non-existing key doesn't set destination - $encoding} {
      r del foo bar dst
      r zadd foo 1 a
      assert_equal 1 [r zunionstore dst 2 foo bar]
@@ -2248,7 +2248,7 @@ fn zunionstore_against_non_existing_key() {
 }
 
 /*
- test {ZUNION/ZINTER/ZDIFF/ZINTERCARD against non-existing key} {
+ test {ZUNION/ZINTER/ZINTERCARD/ZDIFF against non-existing key - $encoding} {
      r del foo bar
      assert_equal {} [r zunion 2 foo bar]
      assert_equal {} [r zinter 2 foo bar]
