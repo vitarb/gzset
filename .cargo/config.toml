@@ -1,0 +1,2 @@
+[alias]
+valkey = "run --bin xtask -- start-valkey"
