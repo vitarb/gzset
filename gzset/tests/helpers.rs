@@ -2,15 +2,24 @@ use std::process::{Child, Command};
 use std::{fs, path::Path};
 use std::{thread, time::Duration};
 
+fn workspace_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
 pub fn latest_so_path() -> std::path::PathBuf {
     use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
 
-    let debug = format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}");
-    let release = format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}");
+    let root = workspace_root();
+    let debug = root.join(format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
+    let release = root.join(format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
 
     if !Path::new(&debug).exists() {
         assert!(Command::new("cargo")
             .arg("build")
+            .arg("--package=gzset")
             .status()
             .expect("failed to run cargo build")
             .success());

@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+portpicker = "0.1"
+redis = "0.25"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+redis = "0.25"
+portpicker = "0.1"
+nix = "0.26"
