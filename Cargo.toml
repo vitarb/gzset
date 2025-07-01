@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 portpicker = "0.1"
 redis = "0.25"
 heck = "0.5"
+rand = "0.8"
 
 [dev-dependencies]
 quickcheck = "1"

@@ -193,6 +193,16 @@ impl ScoreSet {
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
     }
+
+    pub fn all_items(&self) -> Vec<(f64, String)> {
+        let mut out = Vec::new();
+        for (score, set) in &self.by_score {
+            for m in set {
+                out.push((score.0, m.clone()));
+            }
+        }
+        out
+    }
 }
 
 /// Map of key name to sorted set data.
@@ -298,6 +308,198 @@ fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     Ok(0i64.into())
 }
 
+fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
+    if args.len() > 3 || args.len() < 2 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let mut count = 1usize;
+    if args.len() == 3 {
+        let c: i64 = args[2].parse_integer()?;
+        if c < 0 {
+            return Err(RedisError::Str("ERR count must be positive"));
+        }
+        if c == 0 {
+            return Ok(RedisValue::Array(Vec::new()));
+        }
+        count = c as usize;
+    }
+    let mut sets = SETS.lock().unwrap();
+    let mut result = Vec::new();
+    if let Some(set) = sets.get_mut(&key) {
+        for _ in 0..count {
+            let candidate = if min {
+                set.by_score
+                    .iter()
+                    .next()
+                    .map(|(s, m)| (*s, m.iter().next().unwrap().clone()))
+            } else {
+                set.by_score
+                    .iter()
+                    .next_back()
+                    .map(|(s, m)| (*s, m.iter().next_back().unwrap().clone()))
+            };
+            let (score, member) = match candidate {
+                Some(v) => v,
+                None => break,
+            };
+            set.remove(&member);
+            result.push(member.into());
+            result.push(score.0.to_string().into());
+        }
+        if set.is_empty() {
+            sets.remove(&key);
+        }
+    }
+    if result.is_empty() {
+        if count == 1 {
+            Ok(RedisValue::Null)
+        } else {
+            Ok(RedisValue::Array(Vec::new()))
+        }
+    } else {
+        Ok(RedisValue::Array(result))
+    }
+}
+
+fn gzpopmin(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    gzpop_generic(args, true)
+}
+
+fn gzpopmax(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    gzpop_generic(args, false)
+}
+
+fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 2 || args.len() > 4 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let mut idx = 2usize;
+    let mut count: Option<i64> = None;
+    let mut with_scores = false;
+    if idx < args.len() {
+        let a = args[idx].to_string_lossy();
+        if a.eq_ignore_ascii_case("withscores") {
+            return Err(RedisError::WrongArity);
+        }
+        count = Some(args[idx].parse_integer()?);
+        idx += 1;
+    }
+    if idx < args.len() {
+        if args[idx]
+            .to_string_lossy()
+            .eq_ignore_ascii_case("withscores")
+        {
+            with_scores = true;
+            idx += 1;
+        } else {
+            return Err(RedisError::WrongArity);
+        }
+    }
+    if idx != args.len() {
+        return Err(RedisError::WrongArity);
+    }
+
+    let sets = SETS.lock().unwrap();
+    let set = match sets.get(&key) {
+        Some(s) => s,
+        None => {
+            return if count.is_some() {
+                Ok(RedisValue::Array(Vec::new()))
+            } else {
+                Ok(RedisValue::Null)
+            };
+        }
+    };
+    let items = set.all_items();
+    if items.is_empty() {
+        return if count.is_some() {
+            Ok(RedisValue::Array(Vec::new()))
+        } else {
+            Ok(RedisValue::Null)
+        };
+    }
+    use rand::{seq::SliceRandom, thread_rng};
+    let mut rng = thread_rng();
+    match count {
+        None => {
+            let &(score, ref member) = items.choose(&mut rng).unwrap();
+            if with_scores {
+                Ok(RedisValue::Array(vec![
+                    member.clone().into(),
+                    score.to_string().into(),
+                ]))
+            } else {
+                Ok(member.clone().into())
+            }
+        }
+        Some(c) => {
+            if c == 0 {
+                return Ok(RedisValue::Array(Vec::new()));
+            }
+            let mut out = Vec::new();
+            if c < 0 {
+                let cnt = (-c) as usize;
+                for _ in 0..cnt {
+                    let &(score, ref member) = items.choose(&mut rng).unwrap();
+                    out.push(member.clone().into());
+                    if with_scores {
+                        out.push(score.to_string().into());
+                    }
+                }
+            } else {
+                let cnt = c as usize;
+                let mut idxs: Vec<_> = items.iter().collect();
+                idxs.shuffle(&mut rng);
+                for &(score, ref member) in idxs.into_iter().take(cnt.min(items.len())) {
+                    out.push(member.clone().into());
+                    if with_scores {
+                        out.push(score.to_string().into());
+                    }
+                }
+            }
+            Ok(RedisValue::Array(out))
+        }
+    }
+}
+
+fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() != 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let cursor: u64 = args[2].parse_integer()? as u64;
+    let sets = SETS.lock().unwrap();
+    let set = match sets.get(&key) {
+        Some(s) => s,
+        None => {
+            return Ok(RedisValue::Array(vec![
+                "0".into(),
+                RedisValue::Array(Vec::new()),
+            ]));
+        }
+    };
+    let items = set.all_items();
+    const BATCH: usize = 10;
+    let start = cursor as usize;
+    let chunk: Vec<_> = items.iter().skip(start).take(BATCH).cloned().collect();
+    let next = if start + chunk.len() >= items.len() {
+        0
+    } else {
+        (start + chunk.len()) as u64
+    };
+    let mut arr = Vec::new();
+    for (score, member) in chunk {
+        arr.push(member.into());
+        arr.push(score.to_string().into());
+    }
+    Ok(RedisValue::Array(vec![
+        next.to_string().into(),
+        RedisValue::Array(arr),
+    ]))
+}
+
 /// Module initialization function called by Valkey/Redis on module load.
 ///
 /// # Safety
@@ -333,6 +535,10 @@ pub unsafe extern "C" fn gzset_on_load(
         redis_command!(ctx, "GZREM", gzrem, "write fast", 1, 1, 1)?;
         redis_command!(ctx, "GZSCORE", gzscore, "readonly fast", 1, 1, 1)?;
         redis_command!(ctx, "GZCARD", gzcard, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZPOPMIN", gzpopmin, "write fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZPOPMAX", gzpopmax, "write fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZRANDMEMBER", gzrandmember, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZSCAN", gzscan, "readonly fast", 1, 1, 1)?;
         Ok(())
     })();
 

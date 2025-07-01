@@ -326,6 +326,7 @@ dependencies = [
  "ordered-float",
  "portpicker",
  "quickcheck",
+ "rand",
  "redis",
  "redis-module",
  "which",
