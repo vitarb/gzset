@@ -2285,11 +2285,9 @@ fn zrandmember_basics() {
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         ctx.add("zkey", 3.0, "c").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let mut vals = ctx.randmember("zkey", Some(3), false).unwrap();
-            vals.sort();
-            assert_eq!(vals, ["a", "b", "c"]);
-        }
+        let mut vals = ctx.randmember("zkey", Some(3), false).unwrap();
+        vals.sort();
+        assert_eq!(vals, ["a", "b", "c"]);
     });
 }
 
@@ -2301,15 +2299,13 @@ fn zrandmember_withscores() {
         ctx.del("zkey");
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let vals = ctx.randmember("zkey", Some(2), true).unwrap();
-            let mut map = HashMap::new();
-            for pair in vals.chunks(2) {
-                map.insert(pair[0].clone(), pair[1].clone());
-            }
-            assert_eq!(map.get("a"), Some(&"1".to_string()));
-            assert_eq!(map.get("b"), Some(&"2".to_string()));
+        let vals = ctx.randmember("zkey", Some(2), true).unwrap();
+        let mut map = HashMap::new();
+        for pair in vals.chunks(2) {
+            map.insert(pair[0].clone(), pair[1].clone());
         }
+        assert_eq!(map.get("a"), Some(&"1".to_string()));
+        assert_eq!(map.get("b"), Some(&"2".to_string()));
     });
 }
 
@@ -2321,16 +2317,72 @@ fn zrandmember_negative_count_duplicates() {
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         ctx.add("zkey", 3.0, "c").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let vals = ctx.randmember("zkey", Some(-5), false).unwrap();
-            assert_eq!(vals.len(), 5);
-            assert!(vals.iter().all(|v| ["a", "b", "c"].contains(&v.as_str())));
-            let dup = vals
-                .iter()
-                .enumerate()
-                .any(|(i, v)| vals[i + 1..].contains(v));
-            assert!(dup, "expected at least one duplicate");
+        let vals = ctx.randmember("zkey", Some(-5), false).unwrap();
+        assert_eq!(vals.len(), 5);
+        assert!(vals.iter().all(|v| ["a", "b", "c"].contains(&v.as_str())));
+        let dup = vals
+            .iter()
+            .enumerate()
+            .any(|(i, v)| vals[i + 1..].contains(v));
+        assert!(dup, "expected at least one duplicate");
+    });
+}
+
+/*
+    test "ZRANDMEMBER count of 0 is handled correctly" {
+        r zrandmember myzset 0
+    } {}
+
+    test "ZRANDMEMBER with <count> against non existing key" {
+        r zrandmember nonexisting_key 100
+    } {}
+*/
+#[test]
+fn zrandmember_count_zero_and_missing() {
+    with_families(|ctx| {
+        ctx.del("r1");
+        ctx.add("r1", 1.0, "a").unwrap();
+        let vals = ctx.randmember("r1", Some(0), false).unwrap();
+        assert!(vals.is_empty());
+        let vals_missing = ctx.randmember("missing", Some(100), false).unwrap();
+        assert!(vals_missing.is_empty());
+    });
+}
+
+/*
+        foreach {type contents} "listpack {1 a 2 b 3 c} skiplist {1 a 2 b 3 [randstring 70 90 alpha]}" {
+            set original_max_value [lindex [r config get zset-max-ziplist-value] 1]
+            r config set zset-max-ziplist-value 10
+            create_zset myzset $contents
+            assert_encoding $type myzset
+
+            test "ZRANDMEMBER - $type" {
+                unset -nocomplain myzset
+                array set myzset {}
+                for {set i 0} {$i < 100} {incr i} {
+                    set key [r zrandmember myzset]
+                    set myzset($key) 1
+                }
+                assert_equal [lsort [get_keys $contents]] [lsort [array names myzset]]
+            }
+            r config set zset-max-ziplist-value $original_max_value
         }
+*/
+#[test]
+fn zrandmember_eventually_returns_all() {
+    with_families(|ctx| {
+        ctx.del("rz");
+        ctx.add("rz", 1.0, "a").unwrap();
+        ctx.add("rz", 2.0, "b").unwrap();
+        ctx.add("rz", 3.0, "c").unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let v = ctx.randmember("rz", None, false).unwrap();
+            if let Some(s) = v.first() {
+                seen.insert(s.clone());
+            }
+        }
+        assert_eq!(seen.len(), 3);
     });
 }
 
@@ -2342,12 +2394,101 @@ fn zpopmin_zpopmax_basics() {
         ctx.add("zk", 1.0, "a").unwrap();
         ctx.add("zk", 2.0, "b").unwrap();
         ctx.add("zk", 3.0, "c").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let v1 = ctx.popmin("zk", None).unwrap();
-            assert_eq!(v1, ["a", "1"]);
-            let v2 = ctx.popmax("zk", None).unwrap();
-            assert_eq!(v2, ["c", "3"]);
+        let v1 = ctx.popmin("zk", None).unwrap();
+        assert_eq!(v1, ["a", "1"]);
+        let v2 = ctx.popmax("zk", None).unwrap();
+        assert_eq!(v2, ["c", "3"]);
+    });
+}
+
+/*
+        foreach {pop} {ZPOPMIN ZPOPMAX} {
+            test "$pop with the count 0 returns an empty array" {
+                r del zset
+                r zadd zset 1 a 2 b 3 c
+                assert_equal {} [r $pop zset 0]
+
+                # Make sure we can distinguish between an empty array and a null response
+                r readraw 1
+                assert_equal {*0} [r $pop zset 0]
+                r readraw 0
+
+                assert_equal 3 [r zcard zset]
+            }
+
+            test "$pop with negative count" {
+                r set zset foo
+                assert_error "ERR *must be positive" {r $pop zset -1}
+
+                r del zset
+                assert_error "ERR *must be positive" {r $pop zset -2}
+
+                r zadd zset 1 a 2 b 3 c
+                assert_error "ERR *must be positive" {r $pop zset -3}
+            }
         }
+*/
+#[test]
+fn zpopmin_zpopmax_count_zero_negative() {
+    with_families(|ctx| {
+        ctx.del("pz");
+        ctx.add("pz", 1.0, "a").unwrap();
+        ctx.add("pz", 2.0, "b").unwrap();
+        ctx.add("pz", 3.0, "c").unwrap();
+        let empty = ctx.popmin("pz", Some(0)).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(ctx.card("pz").unwrap(), 3);
+
+        let res: RedisResult<Vec<String>> = cmd(&zcmd(ctx.fam, "POPMIN"))
+            .arg("pz")
+            .arg(-1)
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+    });
+}
+
+/*
+    foreach {popmin popmax} {ZPOPMIN ZPOPMAX ZMPOP_MIN ZMPOP_MAX} {
+        test "Basic $popmin/$popmax with a single key - $encoding" {
+            r del zset
+            verify_zpop_response r $popmin zset 0 {} {}
+
+            create_zset zset {-1 a 1 b 2 c 3 d 4 e}
+            verify_zpop_response r $popmin zset 0 {a -1} {zset {{a -1}}}
+            verify_zpop_response r $popmin zset 0 {b 1} {zset {{b 1}}}
+            verify_zpop_response r $popmax zset 0 {e 4} {zset {{e 4}}}
+            verify_zpop_response r $popmax zset 0 {d 3} {zset {{d 3}}}
+            verify_zpop_response r $popmin zset 0 {c 2} {zset {{c 2}}}
+            assert_equal 0 [r exists zset]
+        }
+
+        test "$popmin/$popmax with count - $encoding" {
+            r del z1
+            verify_zpop_response r $popmin z1 2 {} {}
+
+            create_zset z1 {0 a 1 b 2 c 3 d}
+            verify_zpop_response r $popmin z1 2 {a 0 b 1} {z1 {{a 0} {b 1}}}
+            verify_zpop_response r $popmax z1 2 {d 3 c 2} {z1 {{d 3} {c 2}}}
+        }
+    }
+*/
+#[test]
+fn zpopmin_zpopmax_with_count() {
+    with_families(|ctx| {
+        ctx.del("p2");
+        ctx.add("p2", -1.0, "a").unwrap();
+        ctx.add("p2", 1.0, "b").unwrap();
+        ctx.add("p2", 2.0, "c").unwrap();
+        ctx.add("p2", 3.0, "d").unwrap();
+        ctx.add("p2", 4.0, "e").unwrap();
+        let v1 = ctx.popmin("p2", Some(2)).unwrap();
+        assert_eq!(v1, ["a", "-1", "b", "1"]);
+        let v2 = ctx.popmax("p2", Some(2)).unwrap();
+        assert_eq!(v2, ["e", "4", "d", "3"]);
+        let rem = ctx.card("p2").unwrap();
+        assert_eq!(rem, 1); // remaining c
+        ctx.popmin("p2", Some(1)).unwrap();
+        assert_eq!(ctx.card("p2").unwrap(), 0);
     });
 }
 
@@ -2374,21 +2515,19 @@ fn zscan_yields_full_set() {
         for i in 0..50 {
             ctx.add("scan", i as f64, &format!("m{i}")).unwrap();
         }
-        if ctx.fam == Fam::BuiltIn {
-            let mut cur = 0u64;
-            let mut items = HashSet::new();
-            loop {
-                let (next, chunk) = ctx.scan("scan", cur).unwrap();
-                for pair in chunk.chunks(2) {
-                    items.insert(pair[0].clone());
-                }
-                if next == 0 {
-                    break;
-                }
-                cur = next;
+        let mut cur = 0u64;
+        let mut items = HashSet::new();
+        loop {
+            let (next, chunk) = ctx.scan("scan", cur).unwrap();
+            for pair in chunk.chunks(2) {
+                items.insert(pair[0].clone());
             }
-            assert_eq!(items.len(), 50);
+            if next == 0 {
+                break;
+            }
+            cur = next;
         }
+        assert_eq!(items.len(), 50);
     });
 }
 
