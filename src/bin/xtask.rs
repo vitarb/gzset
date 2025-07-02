@@ -32,10 +32,8 @@ fn occupant_info(port: u16) -> Option<(u32, String)> {
             .args(["-i", &format!(":{port}")])
             .output()
             .ok()?;
-        let line = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .skip(1)
-            .next()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout.lines().skip(1).next()?;
         let mut parts = line.split_whitespace();
         let cmd = parts.next()?.to_string();
         let pid = parts.next()?.parse().ok()?;
