@@ -27,6 +27,13 @@ Start a local server with the module pre-loaded:
 cargo valkey -- --loglevel warning
 ```
 
+## Connecting to the correct port
+
+`cargo valkey` defaults to port 6379 when it is free. If that port is already
+occupied, a random free port is chosen and printed to the terminal. Pass
+`--port 6379` or use `--force-kill` to automatically replace any old server and
+ensure the module listens on the standard port.
+
 ## Contributing
 
 See [AGENTS.md](AGENTS.md) for contributor guidelines used by automated agents.
