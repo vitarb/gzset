@@ -464,6 +464,194 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
 }
 
+fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let key = args[1].to_string_lossy();
+    let members: Vec<_> = args[2..].iter().map(|m| m.to_string_lossy()).collect();
+    let sets = SETS.lock().unwrap();
+    let mut out = Vec::new();
+    if let Some(set) = sets.get(&key) {
+        for m in &members {
+            if let Some(score) = set.score(m) {
+                out.push(score.to_string().into());
+            } else {
+                out.push(RedisValue::Null);
+            }
+        }
+    } else {
+        out.extend((0..members.len()).map(|_| RedisValue::Null));
+    }
+    Ok(RedisValue::Array(out))
+}
+
+fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let num: i64 = args[1].parse_integer()?;
+    if num <= 0 {
+        return Err(RedisError::Str("ERR numkeys must be > 0"));
+    }
+    let num = num as usize;
+    if args.len() != num + 2 {
+        return Err(RedisError::WrongArity);
+    }
+    let keys: Vec<_> = args[2..].iter().map(|k| k.to_string_lossy()).collect();
+    use std::collections::HashMap;
+    let sets = SETS.lock().unwrap();
+    let mut agg: HashMap<String, f64> = HashMap::new();
+    for k in keys {
+        if let Some(set) = sets.get(&k) {
+            for (score, member) in set.all_items() {
+                *agg.entry(member).or_insert(0.0) += score;
+            }
+        }
+    }
+    let mut items: Vec<_> = agg.into_iter().collect();
+    items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
+    let mut out = Vec::new();
+    for (m, s) in items {
+        out.push(m.into());
+        out.push(s.to_string().into());
+    }
+    Ok(RedisValue::Array(out))
+}
+
+fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let num: i64 = args[1].parse_integer()?;
+    if num <= 0 {
+        return Err(RedisError::Str("ERR numkeys must be > 0"));
+    }
+    let num = num as usize;
+    if args.len() != num + 2 {
+        return Err(RedisError::WrongArity);
+    }
+    let keys: Vec<_> = args[2..].iter().map(|k| k.to_string_lossy()).collect();
+    let sets = SETS.lock().unwrap();
+    let mut refs: Vec<&ScoreSet> = Vec::new();
+    for k in &keys {
+        match sets.get(k) {
+            Some(s) => refs.push(s),
+            None => return Ok(RedisValue::Array(Vec::new())),
+        }
+    }
+    refs.sort_by_key(|s| s.members.len());
+    let first = refs[0];
+    use std::collections::HashMap;
+    let mut agg: HashMap<String, f64> = HashMap::new();
+    for (m, s) in &first.members {
+        let mut sum = s.0;
+        let mut present = true;
+        for other in &refs[1..] {
+            if let Some(sc) = other.members.get(m) {
+                sum += sc.0;
+            } else {
+                present = false;
+                break;
+            }
+        }
+        if present {
+            agg.insert(m.clone(), sum);
+        }
+    }
+    let mut items: Vec<_> = agg.into_iter().collect();
+    items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
+    let mut out = Vec::new();
+    for (m, s) in items {
+        out.push(m.into());
+        out.push(s.to_string().into());
+    }
+    Ok(RedisValue::Array(out))
+}
+
+fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 3 {
+        return Err(RedisError::WrongArity);
+    }
+    let num: i64 = args[1].parse_integer()?;
+    if num <= 0 {
+        return Err(RedisError::Str("ERR numkeys must be > 0"));
+    }
+    let num = num as usize;
+    if args.len() != num + 2 {
+        return Err(RedisError::WrongArity);
+    }
+    let keys: Vec<_> = args[2..].iter().map(|k| k.to_string_lossy()).collect();
+    let sets = SETS.lock().unwrap();
+    let first = match sets.get(&keys[0]) {
+        Some(s) => s,
+        None => return Ok(RedisValue::Array(Vec::new())),
+    };
+    use std::collections::HashMap;
+    let mut diff: HashMap<String, f64> = HashMap::new();
+    for (m, s) in &first.members {
+        let mut found = false;
+        for k in &keys[1..] {
+            if let Some(set) = sets.get(k) {
+                if set.members.contains_key(m) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            diff.insert(m.clone(), s.0);
+        }
+    }
+    let mut items: Vec<_> = diff.into_iter().collect();
+    items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
+    let mut out = Vec::new();
+    for (m, s) in items {
+        out.push(m.into());
+        out.push(s.to_string().into());
+    }
+    Ok(RedisValue::Array(out))
+}
+
+fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
+    if args.len() < 3 || args.len() > 4 {
+        return Err(RedisError::WrongArity);
+    }
+    let key1 = args[1].to_string_lossy();
+    let key2 = args[2].to_string_lossy();
+    let limit = if args.len() == 4 {
+        Some(args[3].parse_integer()?)
+    } else {
+        None
+    };
+    let sets = SETS.lock().unwrap();
+    let set1 = match sets.get(&key1) {
+        Some(s) => s,
+        None => return Ok(0i64.into()),
+    };
+    let set2 = match sets.get(&key2) {
+        Some(s) => s,
+        None => return Ok(0i64.into()),
+    };
+    let (small, big) = if set1.members.len() <= set2.members.len() {
+        (set1, set2)
+    } else {
+        (set2, set1)
+    };
+    let mut count = 0i64;
+    for m in small.members.keys() {
+        if big.members.contains_key(m) {
+            count += 1;
+            if let Some(l) = limit {
+                if count >= l {
+                    return Ok(count.into());
+                }
+            }
+        }
+    }
+    Ok(count.into())
+}
+
 fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() != 3 {
         return Err(RedisError::WrongArity);
@@ -538,6 +726,11 @@ pub unsafe extern "C" fn gzset_on_load(
         redis_command!(ctx, "GZPOPMIN", gzpopmin, "write fast", 1, 1, 1)?;
         redis_command!(ctx, "GZPOPMAX", gzpopmax, "write fast", 1, 1, 1)?;
         redis_command!(ctx, "GZRANDMEMBER", gzrandmember, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZMSCORE", gzmscore, "readonly fast", 1, 1, 1)?;
+        redis_command!(ctx, "GZUNION", gzunion, "readonly fast", 2, -1, 1)?;
+        redis_command!(ctx, "GZINTER", gzinter, "readonly fast", 2, -1, 1)?;
+        redis_command!(ctx, "GZDIFF", gzdiff, "readonly fast", 2, -1, 1)?;
+        redis_command!(ctx, "GZINTERCARD", gzintercard, "readonly fast", 1, 2, 1)?;
         redis_command!(ctx, "GZSCAN", gzscan, "readonly fast", 1, 1, 1)?;
         Ok(())
     })();

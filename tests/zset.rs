@@ -258,9 +258,16 @@ impl<'a> Ctx<'a> {
     }
     fn intercard(&mut self, keys: &[&str]) -> RedisResult<i64> {
         let mut c = cmd(&zcmd(self.fam, "INTERCARD"));
-        c.arg(keys.len());
-        for k in keys {
-            c.arg(k);
+        if self.fam == Fam::BuiltIn {
+            c.arg(keys.len());
+            for k in keys {
+                c.arg(k);
+            }
+        } else {
+            assert_eq!(keys.len(), 2);
+            for k in keys {
+                c.arg(k);
+            }
         }
         c.query(&mut *self.con)
     }
@@ -373,11 +380,19 @@ impl<'a> Ctx<'a> {
 
     fn intercard_limit(&mut self, keys: &[&str], limit: i64) -> RedisResult<i64> {
         let mut c = cmd(&zcmd(self.fam, "INTERCARD"));
-        c.arg(keys.len());
-        for k in keys {
-            c.arg(k);
+        if self.fam == Fam::BuiltIn {
+            c.arg(keys.len());
+            for k in keys {
+                c.arg(k);
+            }
+            c.arg("LIMIT").arg(limit);
+        } else {
+            assert_eq!(keys.len(), 2);
+            for k in keys {
+                c.arg(k);
+            }
+            c.arg(limit);
         }
-        c.arg("LIMIT").arg(limit);
         c.query(&mut *self.con)
     }
 
@@ -2259,21 +2274,19 @@ fn zunionstore_against_non_existing_key() {
 #[test]
 fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
     with_families(|ctx| {
-        if ctx.fam == Fam::BuiltIn {
-            cmd("DEL")
-                .arg("foo")
-                .arg("bar")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            let u = ctx.union(&["foo", "bar"]).unwrap();
-            assert!(u.is_empty());
-            let i = ctx.inter(&["foo", "bar"]).unwrap();
-            assert!(i.is_empty());
-            let d = ctx.diff(&["foo", "bar"]).unwrap();
-            assert!(d.is_empty());
-            let card = ctx.intercard(&["foo", "bar"]).unwrap();
-            assert_eq!(card, 0);
-        }
+        cmd("DEL")
+            .arg("foo")
+            .arg("bar")
+            .query::<i64>(&mut *ctx.con)
+            .unwrap();
+        let u = ctx.union(&["foo", "bar"]).unwrap();
+        assert!(u.is_empty());
+        let i = ctx.inter(&["foo", "bar"]).unwrap();
+        assert!(i.is_empty());
+        let d = ctx.diff(&["foo", "bar"]).unwrap();
+        assert!(d.is_empty());
+        let card = ctx.intercard(&["foo", "bar"]).unwrap();
+        assert_eq!(card, 0);
     });
 }
 
@@ -2499,10 +2512,8 @@ fn zmscore_basics() {
         ctx.del("ms");
         ctx.add("ms", 1.0, "a").unwrap();
         ctx.add("ms", 2.0, "b").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let vals = ctx.mscore("ms", &["a", "b", "c"]).unwrap();
-            assert_eq!(vals, vec![Some(1.0), Some(2.0), None]);
-        }
+        let vals = ctx.mscore("ms", &["a", "b", "c"]).unwrap();
+        assert_eq!(vals, vec![Some(1.0), Some(2.0), None]);
     });
 }
 
@@ -2693,6 +2704,80 @@ fn zdiff_withscores_basics() {
             ctx.add("b", 3.0, "y").unwrap();
             let res = ctx.diff_withscores(&["a", "b"]).unwrap();
             assert_eq!(res, ["x", "1"]);
+        }
+    });
+}
+
+#[test]
+fn gzunion_inter_diff_withscores() {
+    use redis::cmd;
+    with_families(|ctx| {
+        ctx.del("ua");
+        ctx.del("ub");
+        ctx.add("ua", 1.0, "x").unwrap();
+        ctx.add("ua", 2.0, "y").unwrap();
+        ctx.add("ub", 2.0, "y").unwrap();
+        ctx.add("ub", 3.0, "z").unwrap();
+
+        let union_vals = if ctx.fam == Fam::BuiltIn {
+            ctx.union_withscores(&["ua", "ub"]).unwrap()
+        } else {
+            ctx.union(&["ua", "ub"]).unwrap()
+        };
+        assert_eq!(union_vals, ["x", "1", "z", "3", "y", "4"]);
+
+        let inter_vals: Vec<String> = if ctx.fam == Fam::BuiltIn {
+            cmd("ZINTER")
+                .arg(2)
+                .arg("ua")
+                .arg("ub")
+                .arg("WITHSCORES")
+                .query(&mut *ctx.con)
+                .unwrap()
+        } else {
+            ctx.inter(&["ua", "ub"]).unwrap()
+        };
+        assert_eq!(inter_vals, ["y", "4"]);
+
+        let diff_vals = if ctx.fam == Fam::BuiltIn {
+            ctx.diff_withscores(&["ua", "ub"]).unwrap()
+        } else {
+            ctx.diff(&["ua", "ub"]).unwrap()
+        };
+        assert_eq!(diff_vals, ["x", "1"]);
+    });
+}
+
+#[test]
+fn gzunion_tiebreak_order() {
+    with_families(|ctx| {
+        ctx.del("ta");
+        ctx.del("tb");
+        ctx.add("ta", 1.0, "b").unwrap();
+        ctx.add("ta", 1.0, "a").unwrap();
+        ctx.add("tb", 1.0, "c").unwrap();
+
+        let vals = if ctx.fam == Fam::BuiltIn {
+            ctx.union_withscores(&["ta", "tb"]).unwrap()
+        } else {
+            ctx.union(&["ta", "tb"]).unwrap()
+        };
+        assert_eq!(vals, ["a", "1", "b", "1", "c", "1"]);
+    });
+}
+
+#[test]
+fn gzunion_reject_zero_numkeys() {
+    use redis::cmd;
+    with_families(|ctx| {
+        let res: RedisResult<Vec<String>> = cmd(&zcmd(ctx.fam, "UNION"))
+            .arg(0)
+            .arg("foo")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+        if ctx.fam == Fam::Module {
+            let msg = format!("{:#?}", res.unwrap_err());
+            assert!(msg.contains("numkeys must be > 0"));
         }
     });
 }
