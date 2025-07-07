@@ -109,7 +109,7 @@ Differences from core Redis:
       │                       │
       │  • GZADD… commands    │
       │  • B‑tree per key     │
-      │  • Global mutex map   │
+      │  • DashMap shards     │
       └───────────┬───────────┘
                   │
       ┌───────────▼───────────┐
@@ -119,12 +119,12 @@ Differences from core Redis:
       └───────────────────────┘
 ```
 
-A simple global `Mutex<BTreeMap>` is fine for functional testing; future
-work will:
+A simple global `Mutex<BTreeMap>` was fine for functional testing but has
+been replaced by a sharded `DashMap` with per‑key `RwLock`s.
+Future work will:
 
-1. Replace the mutex with per‑key sharding or `dashmap`.
-2. Add RDB/AOF serialization hooks.
-3. Swap the B‑tree for a *learned index* backed by GPU inference.
+1. Add RDB/AOF serialization hooks.
+2. Swap the B‑tree for a *learned index* backed by GPU inference.
 
 ---
 
