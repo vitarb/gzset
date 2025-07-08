@@ -1,2 +1,2 @@
 [alias]
-valkey = "run --bin xtask -- start-valkey"
+valkey = "run --bin xtask -- start-valkey --profile release"

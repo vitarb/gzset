@@ -65,6 +65,9 @@ server already listening on 6379.
 | `cargo clippy --all-targets` | Lint (warnings are *errors* in CI)                |
 | `cargo fmt -- --check`       | Format check                                      |
 
+First-time runs may take a while as Cargo compiles the `xtask` helper.
+Run `cargo build --all-targets` before `cargo test` to prime the cache and prevent launch timeouts.
+
 The GitHub Actions workflow replicates the above on *ubuntu‑latest*.
 
 ### Prerequisites
@@ -109,7 +112,7 @@ Differences from core Redis:
       │                       │
       │  • GZADD… commands    │
       │  • B‑tree per key     │
-      │  • Global mutex map   │
+      │  • DashMap shards     │
       └───────────┬───────────┘
                   │
       ┌───────────▼───────────┐
@@ -119,12 +122,12 @@ Differences from core Redis:
       └───────────────────────┘
 ```
 
-A simple global `Mutex<BTreeMap>` is fine for functional testing; future
-work will:
+A simple global `Mutex<BTreeMap>` was fine for functional testing but has
+been replaced by a sharded `DashMap` with per‑key `RwLock`s.
+Future work will:
 
-1. Replace the mutex with per‑key sharding or `dashmap`.
-2. Add RDB/AOF serialization hooks.
-3. Swap the B‑tree for a *learned index* backed by GPU inference.
+1. Add RDB/AOF serialization hooks.
+2. Swap the B‑tree for a *learned index* backed by GPU inference.
 
 ---
 

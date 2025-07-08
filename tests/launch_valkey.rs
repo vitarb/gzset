@@ -34,7 +34,7 @@ fn launch_valkey() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        if start.elapsed() > Duration::from_secs(5) {
+        if start.elapsed() > Duration::from_secs(30) {
             child.kill().ok();
             panic!("valkey-server did not start in time");
         }
