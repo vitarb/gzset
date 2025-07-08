@@ -65,6 +65,9 @@ server already listening on 6379.
 | `cargo clippy --all-targets` | Lint (warnings are *errors* in CI)                |
 | `cargo fmt -- --check`       | Format check                                      |
 
+First-time runs may take a while as Cargo compiles the `xtask` helper.
+Run `cargo build --all-targets` before `cargo test` to prime the cache and prevent launch timeouts.
+
 The GitHub Actions workflow replicates the above on *ubuntu‑latest*.
 
 ### Prerequisites
