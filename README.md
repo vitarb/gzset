@@ -112,7 +112,7 @@ Differences from core Redis:
       │                       │
       │  • GZADD… commands    │
       │  • B‑tree per key     │
-      │  • DashMap shards     │
+      │  • Global RefCell<HashMap> (thread-local) │
       └───────────┬───────────┘
                   │
       ┌───────────▼───────────┐
@@ -122,8 +122,9 @@ Differences from core Redis:
       └───────────────────────┘
 ```
 
-A simple global `Mutex<BTreeMap>` was fine for functional testing but has
-been replaced by a sharded `DashMap` with per‑key `RwLock`s.
+Early prototypes used a global `Mutex<BTreeMap>`.  The crate now keeps its
+state in a thread-local `RefCell<HashMap>`, relying on Valkey to call module
+commands from a single thread.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.
