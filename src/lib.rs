@@ -94,24 +94,108 @@ unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use ryu::Buffer;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+use smallvec::SmallVec;
 
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
 
 #[inline]
-pub fn fmt_f64(score: f64) -> String {
-    let mut buf = Buffer::new();
+pub fn fmt_f64(buf: &mut Buffer, score: f64) -> &str {
     let formatted = buf.format_finite(score);
-    let s = formatted.strip_suffix(".0").unwrap_or(formatted);
-    s.to_owned()
+    formatted.strip_suffix(".0").unwrap_or(formatted)
+}
+
+thread_local! {
+    static FMT_BUF: std::cell::RefCell<Buffer> = std::cell::RefCell::new(Buffer::new());
+}
+
+#[inline]
+pub fn with_fmt_buf<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Buffer) -> R,
+{
+    FMT_BUF.with(|b| f(&mut b.borrow_mut()))
 }
 
 mod sets;
 
 #[derive(Default)]
 pub struct ScoreSet {
-    by_score: BTreeMap<OrderedFloat<f64>, BTreeSet<String>>,
+    by_score: BTreeMap<OrderedFloat<f64>, SmallVec<[String; 4]>>,
     members: FastHashMap<String, OrderedFloat<f64>>,
+}
+
+#[allow(clippy::type_complexity)]
+struct ScoreIter<'a> {
+    outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, SmallVec<[String; 4]>>,
+    current: Option<(&'a SmallVec<[String; 4]>, OrderedFloat<f64>, usize)>,
+    index: usize,
+    start: usize,
+    stop: usize,
+}
+
+impl<'a> ScoreIter<'a> {
+    fn new(
+        map: &'a BTreeMap<OrderedFloat<f64>, SmallVec<[String; 4]>>,
+        start: usize,
+        stop: usize,
+    ) -> Self {
+        Self {
+            outer: map.iter(),
+            current: None,
+            index: 0,
+            start,
+            stop,
+        }
+    }
+
+    fn empty(map: &'a BTreeMap<OrderedFloat<f64>, SmallVec<[String; 4]>>) -> Self {
+        Self {
+            outer: map.iter(),
+            current: None,
+            index: 0,
+            start: 1,
+            stop: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        if self.start > self.stop {
+            0
+        } else {
+            self.stop - self.start + 1
+        }
+    }
+}
+
+impl<'a> Iterator for ScoreIter<'a> {
+    type Item = (&'a str, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index <= self.stop {
+            if let Some((vec, score, ref mut pos)) = &mut self.current {
+                if *pos < vec.len() {
+                    let global = self.index;
+                    let out_member = &vec[*pos];
+                    *pos += 1;
+                    self.index += 1;
+                    if global < self.start {
+                        continue;
+                    }
+                    return Some((out_member.as_str(), score.0));
+                }
+                self.current = None;
+                continue;
+            }
+            match self.outer.next() {
+                Some((score, vec)) => {
+                    self.current = Some((vec, *score, 0));
+                }
+                None => break,
+            }
+        }
+        None
+    }
 }
 
 impl ScoreSet {
@@ -120,27 +204,32 @@ impl ScoreSet {
         match self.members.insert(member.to_owned(), key) {
             Some(old) if old == key => return false,
             Some(old) => {
-                if let Some(set) = self.by_score.get_mut(&old) {
-                    set.remove(member);
-                    if set.is_empty() {
+                if let Some(vec) = self.by_score.get_mut(&old) {
+                    if let Ok(pos) = vec.binary_search_by(|m| m.as_str().cmp(member)) {
+                        vec.remove(pos);
+                    }
+                    if vec.is_empty() {
                         self.by_score.remove(&old);
                     }
                 }
             }
             None => {}
         }
-        self.by_score
-            .entry(key)
-            .or_default()
-            .insert(member.to_owned());
+        let vec = self.by_score.entry(key).or_default();
+        match vec.binary_search_by(|m| m.as_str().cmp(member)) {
+            Ok(_) => {}
+            Err(pos) => vec.insert(pos, member.to_owned()),
+        }
         true
     }
 
     pub fn remove(&mut self, member: &str) -> bool {
         if let Some(score) = self.members.remove(member) {
-            if let Some(set) = self.by_score.get_mut(&score) {
-                set.remove(member);
-                if set.is_empty() {
+            if let Some(vec) = self.by_score.get_mut(&score) {
+                if let Ok(pos) = vec.binary_search_by(|m| m.as_str().cmp(member)) {
+                    vec.remove(pos);
+                }
+                if vec.is_empty() {
                     self.by_score.remove(&score);
                 }
             }
@@ -173,9 +262,15 @@ impl ScoreSet {
     }
 
     pub fn range_iter(&self, start: isize, stop: isize) -> Vec<(f64, String)> {
+        self.iter_range(start, stop)
+            .map(|(m, s)| (s, m.to_owned()))
+            .collect()
+    }
+
+    fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
         let len = self.members.len() as isize;
         if len == 0 {
-            return Vec::new();
+            return ScoreIter::empty(&self.by_score);
         }
         let mut start = if start < 0 { len + start } else { start };
         let mut stop = if stop < 0 { len + stop } else { stop };
@@ -183,28 +278,15 @@ impl ScoreSet {
             start = 0;
         }
         if stop < 0 {
-            return Vec::new();
+            return ScoreIter::empty(&self.by_score);
         }
         if stop >= len {
             stop = len - 1;
         }
         if start > stop {
-            return Vec::new();
+            return ScoreIter::empty(&self.by_score);
         }
-        let mut idx = 0isize;
-        let mut out = Vec::new();
-        for (score, set) in &self.by_score {
-            for member in set {
-                if idx >= start && idx <= stop {
-                    out.push((score.0, member.clone()));
-                }
-                idx += 1;
-                if idx > stop {
-                    return out;
-                }
-            }
-        }
-        out
+        ScoreIter::new(&self.by_score, start as usize, stop as usize)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -231,9 +313,9 @@ impl ScoreSet {
             };
             let s = entry.get_mut();
             let m = if min {
-                s.pop_first().unwrap()
+                s.remove(0)
             } else {
-                s.pop_last().unwrap()
+                s.pop().unwrap()
             };
             let empty = s.is_empty();
             let _ = s;
@@ -269,7 +351,7 @@ fn gzrank(_ctx: &Context, args: Vec<RedisString>) -> Result {
     Ok(RedisValue::Null)
 }
 
-fn gzrange(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() != 4 {
         return Err(RedisError::WrongArity);
     }
@@ -281,13 +363,15 @@ fn gzrange(_ctx: &Context, args: Vec<RedisString>) -> Result {
     };
     let start = parse_index(&args[2])?;
     let stop = parse_index(&args[3])?;
-    let vals: Vec<RedisValue> = sets::with_read(key, |s| {
-        s.range_iter(start, stop)
-            .into_iter()
-            .map(|(_, m)| m.into())
-            .collect()
+    sets::with_read(key, |s| {
+        let it = s.iter_range(start, stop);
+        let len = it.len();
+        raw::reply_with_array(ctx.get_raw(), len as std::os::raw::c_long);
+        for (m, _) in it {
+            raw::reply_with_string_buffer(ctx.get_raw(), m.as_ptr().cast(), m.len());
+        }
     });
-    Ok(RedisValue::Array(vals))
+    Ok(RedisValue::NoReply)
 }
 
 fn gzrem(_ctx: &Context, args: Vec<RedisString>) -> Result {
@@ -355,9 +439,9 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
             let (member, remove_score) = {
                 let set_ref = entry.get_mut();
                 let m = if min {
-                    set_ref.pop_first().unwrap()
+                    set_ref.remove(0)
                 } else {
-                    set_ref.pop_last().unwrap()
+                    set_ref.pop().unwrap()
                 };
                 let empty = set_ref.is_empty();
                 (m, empty)
@@ -367,7 +451,7 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
             }
             set.members.remove(&member);
             out.push(member.into());
-            out.push(fmt_f64(score_key.0).into());
+            with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
         }
         out
     });
@@ -437,7 +521,7 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
             if with_scores {
                 Ok(RedisValue::Array(vec![
                     member.clone().into(),
-                    fmt_f64(score).into(),
+                    with_fmt_buf(|b| fmt_f64(b, score).to_owned()).into(),
                 ]))
             } else {
                 Ok(member.clone().into())
@@ -454,7 +538,7 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
                     let &(score, ref member) = items.choose(&mut rng).unwrap();
                     out.push(member.clone().into());
                     if with_scores {
-                        out.push(fmt_f64(score).into());
+                        with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
                     }
                 }
             } else {
@@ -464,7 +548,7 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
                 for &(score, ref member) in idxs.into_iter().take(cnt.min(items.len())) {
                     out.push(member.clone().into());
                     if with_scores {
-                        out.push(fmt_f64(score).into());
+                        with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
                     }
                 }
             }
@@ -483,7 +567,7 @@ fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     sets::with_read(key, |set| {
         for m in &members {
             if let Some(score) = set.score(m) {
-                out.push(fmt_f64(score).into());
+                with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
             } else {
                 out.push(RedisValue::Null);
             }
@@ -518,7 +602,7 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut out = Vec::new();
     for (m, s) in items {
         out.push(m.into());
-        out.push(fmt_f64(s).into());
+        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
     }
     Ok(RedisValue::Array(out))
 }
@@ -563,7 +647,7 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut out = Vec::new();
     for (m, s) in items {
         out.push(m.into());
-        out.push(fmt_f64(s).into());
+        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
     }
     Ok(RedisValue::Array(out))
 }
@@ -602,7 +686,7 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut out = Vec::new();
     for (m, s) in items {
         out.push(m.into());
-        out.push(fmt_f64(s).into());
+        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
     }
     Ok(RedisValue::Array(out))
 }
@@ -669,7 +753,7 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut arr = Vec::new();
     for (score, member) in chunk {
         arr.push(member.into());
-        arr.push(fmt_f64(score).into());
+        with_fmt_buf(|b| arr.push(fmt_f64(b, score).to_owned().into()));
     }
     Ok(RedisValue::Array(vec![
         next.to_string().into(),
@@ -804,7 +888,7 @@ mod tests {
         while !set.by_score.is_empty() {
             let mut entry = set.by_score.first_entry().unwrap();
             let s = entry.get_mut();
-            let m = s.pop_first().unwrap();
+            let m = s.remove(0);
             let empty = s.is_empty();
             let _ = s;
             if empty {
@@ -822,7 +906,7 @@ mod tests {
         while !set.by_score.is_empty() {
             let mut entry = set.by_score.last_entry().unwrap();
             let s = entry.get_mut();
-            let m = s.pop_last().unwrap();
+            let m = s.pop().unwrap();
             let empty = s.is_empty();
             let _ = s;
             if empty {
