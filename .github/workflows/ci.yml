@@ -31,7 +31,12 @@ jobs:
         run: cargo fmt -- --check
         shell: bash
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings -D clippy::to_string_in_format_args
+        shell: bash
+      - name: Check HashMap usage
+        run: |
+          RG=$(rg --count '#\\[cfg(test\\)]?\\s*use std::collections::HashMap' -g '!**/target/**')
+          test "$RG" -eq 0
         shell: bash
       - name: Check duplicates
         run: cargo tree -d
@@ -39,3 +44,12 @@ jobs:
       - name: Test
         run: cargo test --all --all-targets --verbose
         shell: bash
+      - name: Bench baseline
+        run: |
+          git checkout HEAD~1
+          cargo bench --features bench --bench gzpop -- --save-baseline base
+          git checkout -
+      - name: Bench current
+        run: cargo bench --features bench --bench gzpop -- --baseline base --save-baseline new
+      - name: Check bench improvement
+        run: python .github/scripts/check_pop.py
