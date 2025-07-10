@@ -4,6 +4,7 @@ use gzset::ScoreSet;
 fn bench_range(c: &mut Criterion) {
     let entries: Vec<(f64, String)> = (0..1_000_000).map(|i| (i as f64, i.to_string())).collect();
     let mut group = c.benchmark_group("gzrange_iter");
+    group.sample_size(10);
     group.bench_function("iter", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();

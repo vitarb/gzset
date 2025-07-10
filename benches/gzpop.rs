@@ -10,7 +10,7 @@ fn bench_pop(c: &mut Criterion) {
             for (s, m) in &entries {
                 set.insert(*s, m);
             }
-            set.pop_all(true);
+            let _ = set.pop_all(true);
         })
     });
     group.bench_function("pop_max", |b| {
@@ -19,7 +19,7 @@ fn bench_pop(c: &mut Criterion) {
             for (s, m) in &entries {
                 set.insert(*s, m);
             }
-            set.pop_all(false);
+            let _ = set.pop_all(false);
         })
     });
     group.finish();

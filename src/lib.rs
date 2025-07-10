@@ -1,5 +1,6 @@
 #![deny(clippy::uninlined_format_args)]
 #![deny(clippy::to_string_in_format_args)]
+#![allow(clippy::unnecessary_mut_passed)]
 use std::os::raw::{c_char, c_int, c_void};
 
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
@@ -159,6 +160,7 @@ impl<'a> ScoreIter<'a> {
         }
     }
 
+    #[inline]
     fn len(&self) -> usize {
         if self.start > self.stop {
             0
@@ -267,7 +269,7 @@ impl ScoreSet {
             .collect()
     }
 
-    fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
+    pub(crate) fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
         let len = self.members.len() as isize;
         if len == 0 {
             return ScoreIter::empty(&self.by_score);
@@ -304,7 +306,8 @@ impl ScoreSet {
     }
 
     #[cfg(any(test, feature = "bench"))]
-    pub fn pop_all(&mut self, min: bool) {
+    pub fn pop_all(&mut self, min: bool) -> Vec<String> {
+        let mut out = Vec::new();
         while !self.by_score.is_empty() {
             let mut entry = if min {
                 self.by_score.first_entry().unwrap()
@@ -319,7 +322,9 @@ impl ScoreSet {
                 entry.remove_entry();
             }
             self.members.remove(&m);
+            out.push(m);
         }
+        out
     }
 }
 
@@ -880,37 +885,13 @@ mod tests {
         for m in ["b", "a", "c"] {
             set.insert(1.0, m);
         }
-        let mut mins = Vec::new();
-        while !set.by_score.is_empty() {
-            let mut entry = set.by_score.first_entry().unwrap();
-            let s = entry.get_mut();
-            let m = s.remove(0);
-            let empty = s.is_empty();
-            let _ = s;
-            if empty {
-                entry.remove_entry();
-            }
-            set.members.remove(&m);
-            mins.push(m);
-        }
+        let mins = set.pop_all(true);
         assert_eq!(mins, ["a", "b", "c"]);
 
         for m in ["b", "a", "c"] {
             set.insert(1.0, m);
         }
-        let mut maxs = Vec::new();
-        while !set.by_score.is_empty() {
-            let mut entry = set.by_score.last_entry().unwrap();
-            let s = entry.get_mut();
-            let m = s.pop().unwrap();
-            let empty = s.is_empty();
-            let _ = s;
-            if empty {
-                entry.remove_entry();
-            }
-            set.members.remove(&m);
-            maxs.push(m);
-        }
+        let maxs = set.pop_all(false);
         assert_eq!(maxs, ["c", "b", "a"]);
     }
 }

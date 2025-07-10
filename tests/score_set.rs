@@ -18,7 +18,7 @@ fn pop_min_max_duplicates() {
         set.insert(1.0, m);
     }
     let mut mins = Vec::new();
-    while let Some((_, m)) = set.range_iter(0, 0).pop() {
+    for (_, m) in set.range_iter(0, -1) {
         mins.push(m.clone());
         set.remove(&m);
     }
@@ -28,7 +28,7 @@ fn pop_min_max_duplicates() {
         set.insert(1.0, m);
     }
     let mut maxs = Vec::new();
-    while let Some((_, m)) = set.range_iter(-1, -1).pop() {
+    for (_, m) in set.range_iter(0, -1).into_iter().rev() {
         maxs.push(m.clone());
         set.remove(&m);
     }
