@@ -90,10 +90,10 @@ unsafe extern "C" fn gzset_rdb_load(_io: *mut raw::RedisModuleIO, _encver: c_int
 
 unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c_void) {}
 
-use dashmap::DashMap;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, RwLock};
+
+mod sets;
 
 #[derive(Default)]
 pub struct ScoreSet {
@@ -209,11 +209,6 @@ impl ScoreSet {
     }
 }
 
-/// Map of key name to sorted set data.
-type SetsMap = DashMap<String, Arc<RwLock<ScoreSet>>>;
-
-static SETS: once_cell::sync::Lazy<SetsMap> = once_cell::sync::Lazy::new(DashMap::new);
-
 fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() != 4 {
         return Err(RedisError::WrongArity);
@@ -222,11 +217,7 @@ fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let score: f64 = args[2].parse_float()?;
     let member = args[3].try_as_str()?;
 
-    let entry = SETS
-        .entry(key.to_owned())
-        .or_insert_with(|| Arc::new(RwLock::new(ScoreSet::default())));
-    let mut set = entry.write().unwrap();
-    let added = set.insert(score, member);
+    let added = sets::with_write(key, |s| s.insert(score, member));
     Ok((added as i64).into())
 }
 
@@ -236,10 +227,8 @@ fn gzrank(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    if let Some(set) = SETS.get(key) {
-        if let Some(rank) = set.value().read().unwrap().rank(member) {
-            return Ok((rank as i64).into());
-        }
+    if let Some(rank) = sets::with_read(key, |s| s.rank(member)) {
+        return Ok((rank as i64).into());
     }
     Ok(RedisValue::Null)
 }
@@ -256,18 +245,13 @@ fn gzrange(_ctx: &Context, args: Vec<RedisString>) -> Result {
     };
     let start = parse_index(&args[2])?;
     let stop = parse_index(&args[3])?;
-    if let Some(set) = SETS.get(key) {
-        let vals: Vec<RedisValue> = set
-            .value()
-            .read()
-            .unwrap()
-            .range_iter(start, stop)
+    let vals: Vec<RedisValue> = sets::with_read(key, |s| {
+        s.range_iter(start, stop)
             .into_iter()
             .map(|(_, m)| m.into())
-            .collect();
-        return Ok(RedisValue::Array(vals));
-    }
-    Ok(RedisValue::Array(Vec::new()))
+            .collect()
+    });
+    Ok(RedisValue::Array(vals))
 }
 
 fn gzrem(_ctx: &Context, args: Vec<RedisString>) -> Result {
@@ -276,18 +260,8 @@ fn gzrem(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    if let Some(entry) = SETS.get_mut(key) {
-        let mut set = entry.write().unwrap();
-        let removed = set.remove(member);
-        let empty = set.is_empty();
-        drop(set);
-        drop(entry);
-        if empty {
-            SETS.remove(key);
-        }
-        return Ok((removed as i64).into());
-    }
-    Ok(0i64.into())
+    let removed = sets::with_write(key, |s| s.remove(member));
+    Ok((removed as i64).into())
 }
 
 fn gzscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
@@ -296,10 +270,8 @@ fn gzscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    if let Some(set) = SETS.get(key) {
-        if let Some(score) = set.value().read().unwrap().score(member) {
-            return Ok(score.into());
-        }
+    if let Some(score) = sets::with_read(key, |s| s.score(member)) {
+        return Ok(score.into());
     }
     Ok(RedisValue::Null)
 }
@@ -309,10 +281,8 @@ fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
-    if let Some(set) = SETS.get(key) {
-        return Ok((set.value().read().unwrap().members.len() as i64).into());
-    }
-    Ok(0i64.into())
+    let len = sets::with_read(key, |s| s.members.len() as i64);
+    Ok(len.into())
 }
 
 fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
@@ -331,9 +301,8 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
-    let mut result = Vec::new();
-    if let Some(entry) = SETS.get_mut(key) {
-        let mut set = entry.write().unwrap();
+    let result = sets::with_write(key, |set| {
+        let mut out = Vec::new();
         for _ in 0..count {
             let candidate = if min {
                 set.by_score
@@ -351,16 +320,11 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
                 None => break,
             };
             set.remove(&member);
-            result.push(member.into());
-            result.push(score.0.to_string().into());
+            out.push(member.into());
+            out.push(score.0.to_string().into());
         }
-        let empty = set.is_empty();
-        drop(set);
-        drop(entry);
-        if empty {
-            SETS.remove(key);
-        }
-    }
+        out
+    });
     if result.is_empty() {
         if count == 1 {
             Ok(RedisValue::Null)
@@ -411,17 +375,7 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
 
-    let set = match SETS.get(key) {
-        Some(s) => s,
-        None => {
-            return if count.is_some() {
-                Ok(RedisValue::Array(Vec::new()))
-            } else {
-                Ok(RedisValue::Null)
-            };
-        }
-    };
-    let items = set.value().read().unwrap().all_items();
+    let items = sets::with_read(key, |s| s.all_items());
     if items.is_empty() {
         return if count.is_some() {
             Ok(RedisValue::Array(Vec::new()))
@@ -480,8 +434,7 @@ fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let key = args[1].try_as_str()?;
     let members: Vec<_> = args[2..].iter().map(|m| m.try_as_str().unwrap()).collect();
     let mut out = Vec::new();
-    if let Some(set) = SETS.get(key) {
-        let set = set.value().read().unwrap();
+    sets::with_read(key, |set| {
         for m in &members {
             if let Some(score) = set.score(m) {
                 out.push(score.to_string().into());
@@ -489,9 +442,7 @@ fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
                 out.push(RedisValue::Null);
             }
         }
-    } else {
-        out.extend((0..members.len()).map(|_| RedisValue::Null));
-    }
+    });
     Ok(RedisValue::Array(out))
 }
 
@@ -511,11 +462,11 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     use std::collections::HashMap;
     let mut agg: HashMap<String, f64> = HashMap::new();
     for k in keys {
-        if let Some(set) = SETS.get(k) {
-            for (score, member) in set.value().read().unwrap().all_items() {
+        sets::with_read(k, |set| {
+            for (score, member) in set.all_items() {
                 *agg.entry(member).or_insert(0.0) += score;
             }
-        }
+        });
     }
     let mut items: Vec<_> = agg.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
@@ -540,27 +491,23 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
-    let mut refs: Vec<Arc<RwLock<ScoreSet>>> = Vec::new();
-    for &k in &keys {
-        match SETS.get(k) {
-            Some(s) => refs.push(Arc::clone(s.value())),
-            None => return Ok(RedisValue::Array(Vec::new())),
-        }
-    }
-    refs.sort_by_key(|s| s.read().unwrap().members.len());
-    let first = refs[0].read().unwrap();
     use std::collections::HashMap;
+    let mut keys_vec: Vec<_> = keys.clone();
+    keys_vec.sort_by_key(|k| sets::with_read(k, |s| s.members.len()));
+    let first_members: Vec<(String, f64)> = sets::with_read(keys_vec[0], |s| {
+        s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
+    });
     let mut agg: HashMap<String, f64> = HashMap::new();
-    for (m, s) in &first.members {
-        let mut sum = s.0;
+    for (m, sc) in &first_members {
+        let mut sum = *sc;
         let mut present = true;
-        for other in &refs[1..] {
-            let other = other.read().unwrap();
-            if let Some(sc) = other.members.get(m) {
-                sum += sc.0;
-            } else {
-                present = false;
-                break;
+        for k in &keys_vec[1..] {
+            match sets::with_read(k, |set| set.members.get(m).copied()) {
+                Some(other_sc) => sum += other_sc.0,
+                None => {
+                    present = false;
+                    break;
+                }
             }
         }
         if present {
@@ -590,25 +537,21 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
-    let first_arc = match SETS.get(keys[0]) {
-        Some(s) => Arc::clone(s.value()),
-        None => return Ok(RedisValue::Array(Vec::new())),
-    };
-    let first = first_arc.read().unwrap();
+    let first_items: Vec<(String, f64)> = sets::with_read(keys[0], |s| {
+        s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
+    });
     use std::collections::HashMap;
     let mut diff: HashMap<String, f64> = HashMap::new();
-    for (m, s) in &first.members {
+    for (m, sc) in first_items {
         let mut found = false;
         for &k in &keys[1..] {
-            if let Some(set) = SETS.get(k) {
-                if set.value().read().unwrap().members.contains_key(m) {
-                    found = true;
-                    break;
-                }
+            if sets::with_read(k, |set| set.members.contains_key(&m)) {
+                found = true;
+                break;
             }
         }
         if !found {
-            diff.insert(m.clone(), s.0);
+            diff.insert(m, sc);
         }
     }
     let mut items: Vec<_> = diff.into_iter().collect();
@@ -632,24 +575,22 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     } else {
         None
     };
-    let set1 = match SETS.get(key1) {
-        Some(s) => Arc::clone(s.value()),
-        None => return Ok(0i64.into()),
-    };
-    let set2 = match SETS.get(key2) {
-        Some(s) => Arc::clone(s.value()),
-        None => return Ok(0i64.into()),
-    };
-    let (small, big) = if set1.read().unwrap().members.len() <= set2.read().unwrap().members.len() {
-        (set1, set2)
+    let len1 = sets::with_read(key1, |s| s.members.len());
+    let len2 = sets::with_read(key2, |s| s.members.len());
+    if len1 == 0 || len2 == 0 {
+        return Ok(0i64.into());
+    }
+    let (small_key, big_key) = if len1 <= len2 {
+        (key1, key2)
     } else {
-        (set2, set1)
+        (key2, key1)
     };
-    let small = small.read().unwrap();
-    let big = big.read().unwrap();
+    let small_members: Vec<String> =
+        sets::with_read(small_key, |s| s.members.keys().cloned().collect());
     let mut count = 0i64;
-    for m in small.members.keys() {
-        if big.members.contains_key(m) {
+    for m in small_members {
+        let present = sets::with_read(big_key, |set| set.members.contains_key(&m));
+        if present {
             count += 1;
             if let Some(l) = limit {
                 if count >= l {
@@ -667,16 +608,13 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let cursor: u64 = args[2].parse_integer()? as u64;
-    let set = match SETS.get(key) {
-        Some(s) => s,
-        None => {
-            return Ok(RedisValue::Array(vec![
-                "0".into(),
-                RedisValue::Array(Vec::new()),
-            ]));
-        }
-    };
-    let items = set.value().read().unwrap().all_items();
+    let items = sets::with_read(key, |s| s.all_items());
+    if items.is_empty() {
+        return Ok(RedisValue::Array(vec![
+            "0".into(),
+            RedisValue::Array(Vec::new()),
+        ]));
+    }
     const BATCH: usize = 10;
     let start = cursor as usize;
     let chunk: Vec<_> = items.iter().skip(start).take(BATCH).cloned().collect();
