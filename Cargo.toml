@@ -12,11 +12,23 @@ crate-type = ["cdylib", "rlib"]
 name = "xtask"
 path = "src/bin/xtask.rs"
 
+[[bench]]
+name = "gzpop"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "format"
+harness = false
+required-features = ["bench"]
+
 [dependencies]
 redis-module = "2.0.7"
 once_cell = "1"
 ordered-float = "2"
 anyhow = "1"
+ryu = "1"
+rustc-hash = "1"
 clap = { version = "4", features = ["derive"] }
 portpicker = "0.1"
 redis = "0.25"
@@ -26,4 +38,8 @@ rand = "0.8"
 [dev-dependencies]
 quickcheck = "1"
 which = "4"
+criterion = "0.5"
+
+[features]
+bench = []
 

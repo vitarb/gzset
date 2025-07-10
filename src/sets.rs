@@ -1,10 +1,10 @@
+use crate::FastHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 use crate::ScoreSet;
 
 thread_local! {
-    static SETS: RefCell<HashMap<String, ScoreSet>> = RefCell::new(HashMap::new());
+    static SETS: RefCell<FastHashMap<String, ScoreSet>> = RefCell::new(FastHashMap::default());
 }
 
 pub fn with_write<F, R>(key: &str, f: F) -> R

@@ -1,5 +1,6 @@
 # gzset – B‑tree Sorted‑Set Module for Valkey/Redis  
 ![CI](https://github.com/<your‑org>/gzset/actions/workflows/ci.yml/badge.svg)
+![Bench](https://github.com/<your-org>/gzset/actions/workflows/bench.yml/badge.svg)
 
 **gzset** is an experimental Valkey/Redis module that re‑implements
 `ZSET` semantics on top of an **in‑memory B‑tree** rather than the
