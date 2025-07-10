@@ -94,8 +94,8 @@ unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use ryu::Buffer;
-use std::collections::BTreeMap;
 use smallvec::SmallVec;
+use std::collections::BTreeMap;
 
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
 
@@ -312,11 +312,7 @@ impl ScoreSet {
                 self.by_score.last_entry().unwrap()
             };
             let s = entry.get_mut();
-            let m = if min {
-                s.remove(0)
-            } else {
-                s.pop().unwrap()
-            };
+            let m = if min { s.remove(0) } else { s.pop().unwrap() };
             let empty = s.is_empty();
             let _ = s;
             if empty {
