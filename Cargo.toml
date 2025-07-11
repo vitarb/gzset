@@ -22,10 +22,16 @@ name = "format"
 harness = false
 required-features = ["bench"]
 
+[[bench]]
+name = "gzrange"
+harness = false
+required-features = ["bench"]
+
 [dependencies]
 redis-module = "2.0.7"
 once_cell = "1"
 ordered-float = "2"
+smallvec = { version = "1", features = ["union"] }
 anyhow = "1"
 ryu = "1"
 rustc-hash = "1"

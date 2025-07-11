@@ -444,6 +444,7 @@ dependencies = [
  "redis-module",
  "rustc-hash",
  "ryu",
+ "smallvec",
  "which",
 ]
 
