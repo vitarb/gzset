@@ -178,7 +178,7 @@ impl<'a> Iterator for ScoreIter<'a> {
             if let Some((vec, score, ref mut pos)) = &mut self.current {
                 if *pos < vec.len() {
                     let global = self.index;
-                    let out_member = &vec[vec.len() - 1 - *pos];
+                    let out_member = &vec[*pos];
                     *pos += 1;
                     self.index += 1;
                     if global < self.start {
@@ -206,6 +206,7 @@ impl<'a> Iterator for ScoreIter<'a> {
 }
 
 impl ExactSizeIterator for ScoreIter<'_> {
+    #[inline]
     fn len(&self) -> usize {
         let total = self.total_len();
         let done = self.index.saturating_sub(self.start);
@@ -231,7 +232,7 @@ impl ScoreSet {
             None => {}
         }
         let vec = self.by_score.entry(key).or_default();
-        match vec.binary_search_by(|m| member.cmp(m.as_str())) {
+        match vec.binary_search_by(|m| m.as_str().cmp(member)) {
             Ok(_) => {}
             Err(pos) => vec.insert(pos, member.to_owned()),
         }
@@ -241,7 +242,7 @@ impl ScoreSet {
     pub fn remove(&mut self, member: &str) -> bool {
         if let Some(score) = self.members.remove(member) {
             if let Some(vec) = self.by_score.get_mut(&score) {
-                if let Ok(pos) = vec.binary_search_by(|m| member.cmp(m.as_str())) {
+                if let Ok(pos) = vec.binary_search_by(|m| m.as_str().cmp(member)) {
                     vec.remove(pos);
                 }
                 if vec.is_empty() {
@@ -263,7 +264,7 @@ impl ScoreSet {
         let mut idx = 0usize;
         for (score, set) in &self.by_score {
             if *score == target {
-                for m in set.iter().rev() {
+                for m in set.iter() {
                     if m == member {
                         return Some(idx);
                     }
@@ -311,7 +312,7 @@ impl ScoreSet {
     pub fn all_items(&self) -> Vec<(f64, String)> {
         let mut out = Vec::new();
         for (score, set) in &self.by_score {
-            for m in set.iter().rev() {
+            for m in set.iter() {
                 out.push((score.0, m.clone()));
             }
         }
@@ -329,13 +330,13 @@ impl ScoreSet {
             };
             let s = entry.get_mut();
             let m = if min {
-                s.pop().unwrap()
-            } else {
                 let m = s.swap_remove(0);
                 if !s.is_empty() {
-                    s.sort_unstable_by(|a, b| b.cmp(a));
+                    s.sort_unstable();
                 }
                 m
+            } else {
+                s.pop().unwrap()
             };
             let empty = s.is_empty();
             let _ = s;
@@ -387,9 +388,11 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
     let stop = parse_index(&args[3])?;
     sets::with_read(key, |s| {
         let it = s.iter_range(start, stop);
-        raw::reply_with_array(ctx.get_raw(), it.len() as c_long);
-        for (m, _) in it {
-            raw::reply_with_string_buffer(ctx.get_raw(), m.as_ptr().cast(), m.len());
+        unsafe {
+            raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.len() as c_long);
+            for (m, _) in it {
+                raw::RedisModule_ReplyWithStringBuffer.unwrap()(ctx.get_raw(), m.as_ptr().cast(), m.len());
+            }
         }
     });
     Ok(RedisValue::NoReply)
@@ -460,13 +463,13 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
             let (member, remove_score) = {
                 let set_ref = entry.get_mut();
                 let m = if min {
-                    set_ref.pop().unwrap()
-                } else {
                     let m = set_ref.swap_remove(0);
                     if !set_ref.is_empty() {
-                        set_ref.sort_unstable_by(|a, b| b.cmp(a));
+                        set_ref.sort_unstable();
                     }
                     m
+                } else {
+                    set_ref.pop().unwrap()
                 };
                 let empty = set_ref.is_empty();
                 (m, empty)
