@@ -391,7 +391,11 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
         unsafe {
             raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.len() as c_long);
             for (m, _) in it {
-                raw::RedisModule_ReplyWithStringBuffer.unwrap()(ctx.get_raw(), m.as_ptr().cast(), m.len());
+                raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                    ctx.get_raw(),
+                    m.as_ptr().cast(),
+                    m.len(),
+                );
             }
         }
     });
