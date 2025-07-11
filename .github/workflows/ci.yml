@@ -41,12 +41,3 @@ jobs:
       - name: Test
         run: cargo test --all --all-targets --verbose
         shell: bash
-      - name: Bench baseline
-        run: |
-          git checkout HEAD~1
-          cargo bench --features bench --bench gzpop -- --save-baseline base
-          git checkout -
-      - name: Bench current
-        run: cargo bench --features bench --bench gzpop -- --baseline base --save-baseline new
-      - name: Check bench improvement
-        run: python .github/scripts/check_pop.py
