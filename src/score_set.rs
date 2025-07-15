@@ -12,8 +12,7 @@ pub struct ScoreSet {
 
 #[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
-    front_outer:
-        std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<String>>,
+    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<String>>,
     front_current: Option<(
         std::collections::btree_set::Iter<'a, String>,
         OrderedFloat<f64>,
@@ -153,8 +152,7 @@ impl ScoreSet {
             }
             None => {}
         }
-        self
-            .by_score
+        self.by_score
             .entry(key)
             .or_default()
             .insert(member.to_owned());
@@ -220,8 +218,7 @@ impl ScoreSet {
     }
 
     pub fn range_iter(&self, start: isize, stop: isize) -> Vec<(f64, String)> {
-        self
-            .iter_range(start, stop)
+        self.iter_range(start, stop)
             .map(|(m, s)| (s, m.to_owned()))
             .collect()
     }

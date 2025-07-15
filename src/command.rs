@@ -125,7 +125,11 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
         unsafe {
             raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.len() as c_long);
             for (m, _) in &mut it {
-                raw::RedisModule_ReplyWithStringBuffer.unwrap()(ctx.get_raw(), m.as_ptr().cast(), m.len());
+                raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                    ctx.get_raw(),
+                    m.as_ptr().cast(),
+                    m.len(),
+                );
             }
         }
     });
@@ -251,7 +255,10 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
         idx += 1;
     }
     if idx < args.len() {
-        if args[idx].to_string_lossy().eq_ignore_ascii_case("withscores") {
+        if args[idx]
+            .to_string_lossy()
+            .eq_ignore_ascii_case("withscores")
+        {
             with_scores = true;
             idx += 1;
         } else {
@@ -464,8 +471,13 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     if len1 == 0 || len2 == 0 {
         return Ok(0i64.into());
     }
-    let (small_key, big_key) = if len1 <= len2 { (key1, key2) } else { (key2, key1) };
-    let small_members: Vec<String> = sets::with_read(small_key, |s| s.members.keys().cloned().collect());
+    let (small_key, big_key) = if len1 <= len2 {
+        (key1, key2)
+    } else {
+        (key2, key1)
+    };
+    let small_members: Vec<String> =
+        sets::with_read(small_key, |s| s.members.keys().cloned().collect());
     let mut count = 0i64;
     for m in small_members {
         let present = sets::with_read(big_key, |set| set.members.contains_key(&m));
@@ -497,13 +509,20 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     const BATCH: usize = 10;
     let start = cursor as usize;
     let chunk: Vec<_> = items.iter().skip(start).take(BATCH).cloned().collect();
-    let next = if start + chunk.len() >= items.len() { 0 } else { (start + chunk.len()) as u64 };
+    let next = if start + chunk.len() >= items.len() {
+        0
+    } else {
+        (start + chunk.len()) as u64
+    };
     let mut arr = Vec::new();
     for (score, member) in chunk {
         arr.push(member.into());
         with_fmt_buf(|b| arr.push(fmt_f64(b, score).to_owned().into()));
     }
-    Ok(RedisValue::Array(vec![next.to_string().into(), RedisValue::Array(arr)]))
+    Ok(RedisValue::Array(vec![
+        next.to_string().into(),
+        RedisValue::Array(arr),
+    ]))
 }
 
 /// Register all module commands with the server.
@@ -530,7 +549,11 @@ pub unsafe fn register_commands(ctx: *mut raw::RedisModuleCtx) -> rm::Status {
         redis_command!(ctx, "GZSCAN", gzscan, "readonly", 1, 1, 1)?;
         Ok(())
     })();
-    if result.is_err() { rm::Status::Err } else { rm::Status::Ok }
+    if result.is_err() {
+        rm::Status::Err
+    } else {
+        rm::Status::Ok
+    }
 }
 
 #[no_mangle]
@@ -540,8 +563,12 @@ pub unsafe extern "C" fn gzset_on_load(
     _argc: c_int,
 ) -> c_int {
     let module_name = b"gzset\0";
-    if raw::Export_RedisModule_Init(ctx, module_name.as_ptr().cast::<c_char>(), 1, REDISMODULE_API_VERSION)
-        == raw::Status::Err as c_int
+    if raw::Export_RedisModule_Init(
+        ctx,
+        module_name.as_ptr().cast::<c_char>(),
+        1,
+        REDISMODULE_API_VERSION,
+    ) == raw::Status::Err as c_int
     {
         return raw::Status::Err as c_int;
     }

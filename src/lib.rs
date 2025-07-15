@@ -2,11 +2,11 @@
 
 pub use crate::{
     command::register_commands,
-    score_set::{ScoreSet, ScoreIter, FastHashMap},
+    score_set::{FastHashMap, ScoreIter, ScoreSet},
 };
 
 mod command;
-mod score_set;
 mod format;
 pub mod keyspace;
+mod score_set;
 pub use keyspace as sets;
