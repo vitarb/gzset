@@ -126,6 +126,7 @@ Differences from core Redis:
 Early prototypes used a global `Mutex<BTreeMap>`.  The crate now keeps its
 state in a thread-local `RefCell<HashMap>`, relying on Valkey to call module
 commands from a single thread.
+The module subscribes to Valkey's FLUSHDB event and clears its keyspace when FLUSHDB or FLUSHALL run.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.
