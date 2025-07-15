@@ -1,17 +1,16 @@
-use crate::FastHashMap;
+use crate::score_set::ScoreSet;
 use std::cell::RefCell;
-
-use crate::ScoreSet;
+use std::collections::HashMap;
 
 thread_local! {
-    static SETS: RefCell<FastHashMap<String, ScoreSet>> = RefCell::new(FastHashMap::default());
+    static KEYSPACE: RefCell<HashMap<String, ScoreSet>> = RefCell::new(HashMap::new());
 }
 
 pub fn with_write<F, R>(key: &str, f: F) -> R
 where
     F: FnOnce(&mut ScoreSet) -> R,
 {
-    SETS.with(|cell| {
+    KEYSPACE.with(|cell| {
         let mut map = cell.borrow_mut();
         let result;
         {
@@ -29,8 +28,12 @@ pub fn with_read<F, R>(key: &str, f: F) -> R
 where
     F: FnOnce(&ScoreSet) -> R,
 {
-    SETS.with(|cell| {
+    KEYSPACE.with(|cell| {
         let map = cell.borrow();
         f(map.get(key).unwrap_or(&ScoreSet::default()))
     })
+}
+
+pub fn clear_all() {
+    KEYSPACE.with(|cell| cell.borrow_mut().clear());
 }
