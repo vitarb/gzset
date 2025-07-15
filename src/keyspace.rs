@@ -34,6 +34,7 @@ where
     })
 }
 
+/// Remove all stored sets, typically in response to FLUSHDB/FLUSHALL events.
 pub fn clear_all() {
     KEYSPACE.with(|cell| cell.borrow_mut().clear());
 }
