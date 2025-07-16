@@ -38,3 +38,18 @@ where
 pub fn clear_all() {
     KEYSPACE.with(|cell| cell.borrow_mut().clear());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_clears_map() {
+        with_write("k", |s| {
+            s.insert(1.0, "a");
+        });
+        clear_all();
+        let len = with_read("k", |s| s.members.len());
+        assert_eq!(len, 0);
+    }
+}

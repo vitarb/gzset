@@ -557,6 +557,17 @@ pub unsafe fn register_commands(ctx: *mut raw::RedisModuleCtx) -> rm::Status {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn gzset__on_flush(
+    _ctx: *mut raw::RedisModuleCtx,
+    _event: raw::RedisModuleEvent,
+    _sub: u64,
+    _data: *mut c_void,
+) {
+    sets::clear_all();
+}
+
+const REDISMODULE_EVENT_FLUSHDB_VERSION: u64 = 1;
+
 pub unsafe extern "C" fn gzset_on_load(
     ctx: *mut raw::RedisModuleCtx,
     _argv: *mut *mut raw::RedisModuleString,
@@ -578,19 +589,11 @@ pub unsafe extern "C" fn gzset_on_load(
     if register_commands(ctx) == rm::Status::Err {
         return raw::Status::Err as c_int;
     }
-    unsafe extern "C" fn on_flush(
-        _ctx: *mut raw::RedisModuleCtx,
-        _event: raw::RedisModuleEvent,
-        _sub: u64,
-        _data: *mut c_void,
-    ) {
-        sets::clear_all();
-    }
     const FLUSH_EVENT: raw::RedisModuleEvent = raw::RedisModuleEvent {
         id: raw::REDISMODULE_EVENT_FLUSHDB,
-        dataver: 1,
+        dataver: REDISMODULE_EVENT_FLUSHDB_VERSION,
     };
-    if raw::RedisModule_SubscribeToServerEvent.unwrap()(ctx, FLUSH_EVENT, Some(on_flush))
+    if raw::RedisModule_SubscribeToServerEvent.unwrap()(ctx, FLUSH_EVENT, Some(gzset__on_flush))
         == raw::Status::Err as c_int
     {
         return raw::Status::Err as c_int;
