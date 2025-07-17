@@ -111,9 +111,9 @@ Differences from core Redis:
       ┌───────────▼───────────┐
       │      gzset.so         │  (Rust, cdylib)
       │                       │
-      │  • GZADD… commands    │
-      │  • B‑tree per key     │
-      │  • Global RefCell<HashMap> (thread-local) │
+        │  • GZADD… commands    │
+        │  • B‑tree per key     │
+        │  • Global Mutex<HashMap> │
       └───────────┬───────────┘
                   │
       ┌───────────▼───────────┐
@@ -123,9 +123,10 @@ Differences from core Redis:
       └───────────────────────┘
 ```
 
-Early prototypes used a global `Mutex<BTreeMap>`.  The crate now keeps its
-state in a thread-local `RefCell<HashMap>`, relying on Valkey to call module
-commands from a single thread.
+The module keeps its state in a process-wide `Mutex<HashMap>` protected by
+`once_cell::sync::Lazy`.  Commands lock this map whenever they read or write a
+set and it is cleared when Valkey executes `FLUSHDB` or `FLUSHALL`.
+The module subscribes to Valkey's FLUSHDB event and clears its keyspace when FLUSHDB or FLUSHALL run.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.
