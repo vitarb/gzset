@@ -566,6 +566,17 @@ pub unsafe extern "C" fn gzset__on_flush(
     sets::clear_all();
 }
 
+unsafe extern "C" fn gzset_cmd_filter(fctx: *mut raw::RedisModuleCommandFilterCtx) {
+    let arg0 = raw::RedisModule_CommandFilterArgGet.unwrap()(fctx, 0);
+    if !arg0.is_null() {
+        if let Ok(name) = rm::RedisString::from_ptr(arg0) {
+            if name.eq_ignore_ascii_case("flushdb") || name.eq_ignore_ascii_case("flushall") {
+                sets::clear_all();
+            }
+        }
+    }
+}
+
 const REDISMODULE_EVENT_FLUSHDB_VERSION: u64 = 1;
 
 pub unsafe extern "C" fn gzset_on_load(
@@ -587,6 +598,9 @@ pub unsafe extern "C" fn gzset_on_load(
         return raw::Status::Err as c_int;
     }
     if register_commands(ctx) == rm::Status::Err {
+        return raw::Status::Err as c_int;
+    }
+    if raw::RedisModule_RegisterCommandFilter.unwrap()(ctx, Some(gzset_cmd_filter), 0).is_null() {
         return raw::Status::Err as c_int;
     }
     const FLUSH_EVENT: raw::RedisModuleEvent = raw::RedisModuleEvent {
