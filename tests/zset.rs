@@ -59,6 +59,24 @@ impl<'a> Ctx<'a> {
             .arg("WITHSCORES")
             .query(&mut *self.con)
     }
+    fn range_all_ws(&mut self, key: &str) -> RedisResult<Vec<String>> {
+        if self.fam == Fam::BuiltIn {
+            self.range_ws(key, 0, -1)
+        } else {
+            let members = self.range(key, 0, -1)?;
+            if members.is_empty() {
+                return Ok(Vec::new());
+            }
+            let scores =
+                self.mscore(key, &members.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
+            let mut out = Vec::new();
+            for (m, sc) in members.into_iter().zip(scores) {
+                out.push(m);
+                out.push(sc.unwrap().to_string());
+            }
+            Ok(out)
+        }
+    }
     fn rank(&mut self, key: &str, member: &str) -> RedisResult<Option<i64>> {
         cmd(&zcmd(self.fam, "RANK"))
             .arg(key)
@@ -351,6 +369,16 @@ impl<'a> Ctx<'a> {
         c.query(&mut *self.con)
     }
 
+    fn unionstore_aggregate_min(&mut self, dst: &str, keys: &[&str]) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "UNIONSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("AGGREGATE").arg("MIN");
+        c.query(&mut *self.con)
+    }
+
     fn interstore_weights(
         &mut self,
         dst: &str,
@@ -366,6 +394,16 @@ impl<'a> Ctx<'a> {
         for w in weights {
             c.arg(*w);
         }
+        c.query(&mut *self.con)
+    }
+
+    fn interstore_aggregate(&mut self, dst: &str, keys: &[&str], mode: &str) -> RedisResult<i64> {
+        let mut c = cmd(&zcmd(self.fam, "INTERSTORE"));
+        c.arg(dst).arg(keys.len());
+        for k in keys {
+            c.arg(k);
+        }
+        c.arg("AGGREGATE").arg(mode);
         c.query(&mut *self.con)
     }
 
@@ -2246,19 +2284,17 @@ fn zremrangebylex_basics() {
 #[test]
 fn zunionstore_against_non_existing_key() {
     with_families(|ctx| {
-        if ctx.fam == Fam::BuiltIn {
-            cmd("DEL")
-                .arg("foo")
-                .arg("bar")
-                .arg("dst")
-                .query::<i64>(&mut *ctx.con)
-                .unwrap();
-            ctx.add("foo", 1.0, "a").unwrap();
-            let res = ctx.unionstore("dst", &["foo", "bar"]).unwrap();
-            assert_eq!(res, 1);
-            let vals = ctx.range("dst", 0, -1).unwrap();
-            assert_eq!(vals, ["a"]);
-        }
+        cmd("DEL")
+            .arg("foo")
+            .arg("bar")
+            .arg("dst")
+            .query::<i64>(&mut *ctx.con)
+            .unwrap();
+        ctx.add("foo", 1.0, "a").unwrap();
+        let res = ctx.unionstore("dst", &["foo", "bar"]).unwrap();
+        assert_eq!(res, 1);
+        let vals = ctx.range("dst", 0, -1).unwrap();
+        assert_eq!(vals, ["a"]);
     });
 }
 
@@ -2287,6 +2323,29 @@ fn zunion_zinter_zdiff_zintercard_against_non_existing_key() {
         assert!(d.is_empty());
         let card = ctx.intercard(&["foo", "bar"]).unwrap();
         assert_eq!(card, 0);
+    });
+}
+
+/*
+ test "ZUNIONSTORE with empty set - $encoding" {
+     r del zseta{t} zsetb{t}
+     r zadd zseta{t} 1 a
+     r zadd zseta{t} 2 b
+     r zunionstore zsetc{t} 2 zseta{t} zsetb{t}
+     r zrange zsetc{t} 0 -1 withscores
+ } {a 1 b 2}
+*/
+#[test]
+fn zunionstore_with_empty_set() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.unionstore("c", &["a", "b"]).unwrap();
+        let vals = ctx.range_all_ws("c").unwrap();
+        assert_eq!(vals, ["a", "1", "b", "2"]);
     });
 }
 
@@ -2548,14 +2607,36 @@ fn zunionstore_with_weights() {
     with_families(|ctx| {
         ctx.del("a");
         ctx.del("b");
-        if ctx.fam == Fam::BuiltIn {
-            ctx.add("a", 1.0, "x").unwrap();
-            ctx.add("b", 2.0, "x").unwrap();
-            ctx.add("b", 3.0, "y").unwrap();
-            ctx.unionstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
-            let vals = ctx.range_ws("dst", 0, -1).unwrap();
-            assert_eq!(vals, ["x", "8", "y", "9"]);
-        }
+        ctx.add("a", 1.0, "x").unwrap();
+        ctx.add("b", 2.0, "x").unwrap();
+        ctx.add("b", 3.0, "y").unwrap();
+        ctx.unionstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
+        let vals = ctx.range_all_ws("dst").unwrap();
+        assert_eq!(vals, ["x", "8", "y", "9"]);
+    });
+}
+
+/*
+ test "ZUNIONSTORE with AGGREGATE MIN - $encoding" {
+     assert_equal 4 [r zunionstore zsetc{t} 2 zseta{t} zsetb{t} aggregate min]
+     assert_equal {a 1 b 1 c 2 d 3} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zunionstore_with_aggregate_min() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.add("a", 3.0, "c").unwrap();
+        ctx.add("b", 1.0, "b").unwrap();
+        ctx.add("b", 2.0, "c").unwrap();
+        ctx.add("b", 3.0, "d").unwrap();
+        ctx.unionstore_aggregate_min("c", &["a", "b"]).unwrap();
+        let vals = ctx.range_all_ws("c").unwrap();
+        assert_eq!(vals, ["a", "1", "b", "1", "c", "2", "d", "3"]);
     });
 }
 
@@ -2565,14 +2646,12 @@ fn zunionstore_with_aggregate_max() {
     with_families(|ctx| {
         ctx.del("a");
         ctx.del("b");
-        if ctx.fam == Fam::BuiltIn {
-            ctx.add("a", 1.0, "x").unwrap();
-            ctx.add("b", 2.0, "x").unwrap();
-            ctx.add("b", 3.0, "y").unwrap();
-            ctx.unionstore_aggregate_max("dst", &["a", "b"]).unwrap();
-            let vals = ctx.range_ws("dst", 0, -1).unwrap();
-            assert_eq!(vals, ["x", "2", "y", "3"]);
-        }
+        ctx.add("a", 1.0, "x").unwrap();
+        ctx.add("b", 2.0, "x").unwrap();
+        ctx.add("b", 3.0, "y").unwrap();
+        ctx.unionstore_aggregate_max("dst", &["a", "b"]).unwrap();
+        let vals = ctx.range_all_ws("dst").unwrap();
+        assert_eq!(vals, ["x", "2", "y", "3"]);
     });
 }
 
@@ -2582,15 +2661,61 @@ fn zinterstore_with_weights() {
     with_families(|ctx| {
         ctx.del("a");
         ctx.del("b");
-        if ctx.fam == Fam::BuiltIn {
-            ctx.add("a", 1.0, "x").unwrap();
-            ctx.add("a", 2.0, "y").unwrap();
-            ctx.add("b", 3.0, "x").unwrap();
-            ctx.add("b", 4.0, "y").unwrap();
-            ctx.interstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
-            let vals = ctx.range_ws("dst", 0, -1).unwrap();
-            assert_eq!(vals, ["x", "11", "y", "16"]);
-        }
+        ctx.add("a", 1.0, "x").unwrap();
+        ctx.add("a", 2.0, "y").unwrap();
+        ctx.add("b", 3.0, "x").unwrap();
+        ctx.add("b", 4.0, "y").unwrap();
+        ctx.interstore_weights("dst", &["a", "b"], &[2, 3]).unwrap();
+        let vals = ctx.range_all_ws("dst").unwrap();
+        assert_eq!(vals, ["x", "11", "y", "16"]);
+    });
+}
+
+/*
+ test "ZINTERSTORE with AGGREGATE MIN - $encoding" {
+     assert_equal 2 [r zinterstore zsetc{t} 2 zseta{t} zsetb{t} aggregate min]
+     assert_equal {b 1 c 2} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zinterstore_with_aggregate_min() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.add("a", 3.0, "c").unwrap();
+        ctx.add("b", 1.0, "b").unwrap();
+        ctx.add("b", 2.0, "c").unwrap();
+        ctx.add("b", 3.0, "d").unwrap();
+        ctx.interstore_aggregate("c", &["a", "b"], "MIN").unwrap();
+        let vals = ctx.range_all_ws("c").unwrap();
+        assert_eq!(vals, ["b", "1", "c", "2"]);
+    });
+}
+
+/*
+ test "ZINTERSTORE with AGGREGATE MAX - $encoding" {
+     assert_equal 2 [r zinterstore zsetc{t} 2 zseta{t} zsetb{t} aggregate max]
+     assert_equal {b 2 c 3} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zinterstore_with_aggregate_max() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.add("a", 3.0, "c").unwrap();
+        ctx.add("b", 1.0, "b").unwrap();
+        ctx.add("b", 2.0, "c").unwrap();
+        ctx.add("b", 3.0, "d").unwrap();
+        ctx.interstore_aggregate("c", &["a", "b"], "MAX").unwrap();
+        let vals = ctx.range_all_ws("c").unwrap();
+        assert_eq!(vals, ["b", "2", "c", "3"]);
     });
 }
 
@@ -2600,14 +2725,133 @@ fn zdiffstore_basic_difference() {
     with_families(|ctx| {
         ctx.del("a");
         ctx.del("b");
+        ctx.add("a", 1.0, "x").unwrap();
+        ctx.add("a", 2.0, "y").unwrap();
+        ctx.add("b", 3.0, "y").unwrap();
+        ctx.diffstore("dst", &["a", "b"]).unwrap();
+        let vals = ctx.range_all_ws("dst").unwrap();
+        assert_eq!(vals, ["x", "1"]);
+    });
+}
+
+/*
+ test "ZDIFFSTORE with a regular set - $encoding" {
+     r del seta{t}
+     r sadd seta{t} a
+     r sadd seta{t} b
+     r sadd seta{t} c
+     assert_equal 1 [r zdiffstore zsetc{t} 2 seta{t} zsetb{t}]
+     assert_equal {a 1} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zdiffstore_with_regular_set() {
+    with_families(|ctx| {
         if ctx.fam == Fam::BuiltIn {
-            ctx.add("a", 1.0, "x").unwrap();
-            ctx.add("a", 2.0, "y").unwrap();
-            ctx.add("b", 3.0, "y").unwrap();
-            ctx.diffstore("dst", &["a", "b"]).unwrap();
-            let vals = ctx.range_ws("dst", 0, -1).unwrap();
-            assert_eq!(vals, ["x", "1"]);
+            ctx.del("seta");
+            ctx.del("b");
+            ctx.del("out");
+            cmd("SADD")
+                .arg("seta")
+                .arg("a")
+                .arg("b")
+                .arg("c")
+                .query::<i64>(&mut *ctx.con)
+                .unwrap();
+            ctx.add("b", 1.0, "b").unwrap();
+            ctx.add("b", 1.0, "c").unwrap();
+            ctx.diffstore("out", &["seta", "b"]).unwrap();
+            let vals = ctx.range_all_ws("out").unwrap();
+            assert_eq!(vals, ["a", "1"]);
         }
+    });
+}
+
+/*
+ test "ZDIFF subtracting set from itself - $encoding" {
+     assert_equal 0 [r zdiffstore zsetc{t} 2 zseta{t} zseta{t}]
+     assert_equal {} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zdiffstore_subtracting_self() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("out");
+        ctx.add("a", 1.0, "x").unwrap();
+        ctx.add("a", 2.0, "y").unwrap();
+        let res = ctx.diffstore("out", &["a", "a"]).unwrap();
+        assert_eq!(res, 0);
+        let vals = ctx.range_all_ws("out").unwrap();
+        assert!(vals.is_empty());
+    });
+}
+
+/*
+ test "ZDIFF algorithm 1 - $encoding" {
+     r del zseta{t} zsetb{t} zsetc{t}
+     r zadd zseta{t} 1 a
+     r zadd zseta{t} 2 b
+     r zadd zseta{t} 3 c
+     r zadd zsetb{t} 1 b
+     r zadd zsetb{t} 2 c
+     r zadd zsetb{t} 3 d
+     assert_equal 1 [r zdiffstore zsetc{t} 2 zseta{t} zsetb{t}]
+     assert_equal {a 1} [r zrange zsetc{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zdiffstore_algorithm1() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.add("a", 3.0, "c").unwrap();
+        ctx.add("b", 1.0, "b").unwrap();
+        ctx.add("b", 2.0, "c").unwrap();
+        ctx.add("b", 3.0, "d").unwrap();
+        let res = ctx.diffstore("c", &["a", "b"]).unwrap();
+        assert_eq!(res, 1);
+        let vals = ctx.range_all_ws("c").unwrap();
+        assert_eq!(vals, ["a", "1"]);
+    });
+}
+
+/*
+ test "ZDIFF algorithm 2 - $encoding" {
+     r del zseta{t} zsetb{t} zsetc{t} zsetd{t} zsete{t}
+     r zadd zseta{t} 1 a
+     r zadd zseta{t} 2 b
+     r zadd zseta{t} 3 c
+     r zadd zseta{t} 5 e
+     r zadd zsetb{t} 1 b
+     r zadd zsetc{t} 1 c
+     r zadd zsetd{t} 1 d
+     assert_equal 2 [r zdiffstore zsete{t} 4 zseta{t} zsetb{t} zsetc{t} zsetd{t}]
+     assert_equal {a 1 e 5} [r zrange zsete{t} 0 -1 withscores]
+ }
+*/
+#[test]
+fn zdiffstore_algorithm2() {
+    with_families(|ctx| {
+        ctx.del("a");
+        ctx.del("b");
+        ctx.del("c");
+        ctx.del("d");
+        ctx.del("out");
+        ctx.add("a", 1.0, "a").unwrap();
+        ctx.add("a", 2.0, "b").unwrap();
+        ctx.add("a", 3.0, "c").unwrap();
+        ctx.add("a", 5.0, "e").unwrap();
+        ctx.add("b", 1.0, "b").unwrap();
+        ctx.add("c", 1.0, "c").unwrap();
+        ctx.add("d", 1.0, "d").unwrap();
+        let res = ctx.diffstore("out", &["a", "b", "c", "d"]).unwrap();
+        assert_eq!(res, 2);
+        let vals = ctx.range_all_ws("out").unwrap();
+        assert_eq!(vals, ["a", "1", "e", "5"]);
     });
 }
 
@@ -2840,12 +3084,47 @@ fn zunionstore_duplicate_keys_once() {
     with_families(|ctx| {
         ctx.del("foo");
         ctx.add("foo", 1.0, "a").unwrap();
-        if ctx.fam == Fam::BuiltIn {
-            let res = ctx.unionstore("dstdup", &["foo", "foo"]).unwrap();
-            assert_eq!(res, 1);
-            let vals = ctx.range("dstdup", 0, -1).unwrap();
-            assert_eq!(vals, ["a"]);
-        }
+        let res = ctx.unionstore("dstdup", &["foo", "foo"]).unwrap();
+        assert_eq!(res, 1);
+        let vals = ctx.range("dstdup", 0, -1).unwrap();
+        assert_eq!(vals, ["a"]);
+    });
+}
+
+/*
+ test "ZUNIONSTORE/ZINTERSTORE/ZDIFFSTORE error if using WITHSCORES " {
+     assert_error "*ERR*syntax*" {r zunionstore foo{t} 2 zsetd{t} zsetf{t} withscores}
+     assert_error "*ERR*syntax*" {r zinterstore foo{t} 2 zsetd{t} zsetf{t} withscores}
+     assert_error "*ERR*syntax*" {r zdiffstore foo{t} 2 zsetd{t} zsetf{t} withscores}
+ }
+*/
+#[test]
+fn store_withscores_error() {
+    with_families(|ctx| {
+        let res: RedisResult<i64> = cmd(&zcmd(ctx.fam, "UNIONSTORE"))
+            .arg("foo")
+            .arg(2)
+            .arg("a")
+            .arg("b")
+            .arg("WITHSCORES")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+        let res: RedisResult<i64> = cmd(&zcmd(ctx.fam, "INTERSTORE"))
+            .arg("foo")
+            .arg(2)
+            .arg("a")
+            .arg("b")
+            .arg("WITHSCORES")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
+        let res: RedisResult<i64> = cmd(&zcmd(ctx.fam, "DIFFSTORE"))
+            .arg("foo")
+            .arg(2)
+            .arg("a")
+            .arg("b")
+            .arg("WITHSCORES")
+            .query(&mut *ctx.con);
+        assert!(res.is_err());
     });
 }
 
