@@ -31,6 +31,7 @@ CPU‑only reference implementation.
 | RDB/AOF persistence | 🚧   | Stubbed; data is in‑memory only today |
 | GPU‑learned index   | ⏸   | Prototype branch retained, not in `main` |
 | Cluster support     | ❌   | Single‑node only for now |
+| MEMORY USAGE key | returns approximate bytes | ✅ |
 
 ---
 
