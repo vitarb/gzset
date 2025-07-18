@@ -9,7 +9,7 @@ pub type Result<T = RedisValue> = RedisResult<T>;
 
 const REDISMODULE_API_VERSION: c_int = raw::REDISMODULE_APIVER_1 as c_int;
 
-static GZSET_TYPE: rm::native_types::RedisType = rm::native_types::RedisType::new(
+pub static GZSET_TYPE: rm::native_types::RedisType = rm::native_types::RedisType::new(
     "gzsetmod1",
     0,
     raw::RedisModuleTypeMethods {
@@ -17,8 +17,8 @@ static GZSET_TYPE: rm::native_types::RedisType = rm::native_types::RedisType::ne
         rdb_load: Some(gzset_rdb_load),
         rdb_save: Some(gzset_rdb_save),
         aof_rewrite: None,
-        free: None,
-        mem_usage: None,
+        free: Some(crate::memory::gzset_free),
+        mem_usage: Some(crate::memory::gzset_mem_usage),
         digest: None,
         aux_load: None,
         aux_save: None,
@@ -92,7 +92,7 @@ fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let score: f64 = args[2].parse_float()?;
     let member = args[3].try_as_str()?;
 
-    let added = sets::with_write(key, |s| s.insert(score, member));
+    let added = sets::with_write(Some(_ctx), key, |s| s.insert(score, member));
     Ok((added as i64).into())
 }
 
@@ -142,7 +142,7 @@ fn gzrem(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    let removed = sets::with_write(key, |s| s.remove(member));
+    let removed = sets::with_write(Some(_ctx), key, |s| s.remove(member));
     Ok((removed as i64).into())
 }
 
@@ -167,7 +167,7 @@ fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     Ok(len.into())
 }
 
-fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
+fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
     if args.len() > 3 || args.len() < 2 {
         return Err(RedisError::WrongArity);
     }
@@ -183,7 +183,7 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
-    let result = sets::with_write(key, |set| {
+    let result = sets::with_write(Some(ctx), key, |set| {
         let mut out = Vec::new();
         for _ in 0..count {
             let mut entry = if min {
@@ -230,12 +230,12 @@ fn gzpop_generic(args: Vec<RedisString>, min: bool) -> Result {
     }
 }
 
-fn gzpopmin(_ctx: &Context, args: Vec<RedisString>) -> Result {
-    gzpop_generic(args, true)
+fn gzpopmin(ctx: &Context, args: Vec<RedisString>) -> Result {
+    gzpop_generic(ctx, args, true)
 }
 
-fn gzpopmax(_ctx: &Context, args: Vec<RedisString>) -> Result {
-    gzpop_generic(args, false)
+fn gzpopmax(ctx: &Context, args: Vec<RedisString>) -> Result {
+    gzpop_generic(ctx, args, false)
 }
 
 fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {

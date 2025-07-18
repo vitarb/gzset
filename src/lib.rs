@@ -8,5 +8,6 @@ pub use crate::{
 mod command;
 mod format;
 pub mod keyspace;
+mod memory;
 mod score_set;
 pub use keyspace as sets;
