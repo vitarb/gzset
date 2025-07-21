@@ -45,6 +45,11 @@ where
     f(map.get(key).unwrap_or(&ScoreSet::default()))
 }
 
+/// Remove the given set from the in-memory map without touching Redis.
+pub fn remove(key: &str) {
+    KEYSPACE.lock().unwrap().remove(key);
+}
+
 /// Remove all stored sets, typically in response to FLUSHDB/FLUSHALL events.
 pub fn clear_all() {
     KEYSPACE.lock().unwrap().clear();

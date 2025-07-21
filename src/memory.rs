@@ -12,7 +12,8 @@ pub struct ScoreSetRef {
 #[no_mangle]
 pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
     if !value.is_null() {
-        drop(Box::from_raw(value as *mut ScoreSetRef));
+        let key_ref = Box::from_raw(value as *mut ScoreSetRef);
+        sets::remove(&key_ref.key);
     }
 }
 
