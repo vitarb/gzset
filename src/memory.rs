@@ -19,11 +19,17 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
 fn estimate_score_set_usage(set: &ScoreSet) -> usize {
     let mut total = size_of::<ScoreSet>();
 
-    // Roughly account for member map entries.
-    total += set.members.len() * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
+    // Base storage for members map
+    total += set
+        .members
+        .len()
+        * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
     for m in set.members.keys() {
         total += m.len();
     }
+
+    // Simple overhead allowance per entry
+    total += set.members.len() * 14;
 
     total
 }

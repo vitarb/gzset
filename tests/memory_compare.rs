@@ -29,7 +29,7 @@ fn memory_compare() -> redis::RedisResult<()> {
         .arg("USAGE")
         .arg("gz")
         .query(&mut con)?;
-    const ALLOWANCE: i64 = 100 * 1024; // account for allocator overhead
+    const ALLOWANCE: i64 = 4 * 1024; // account for allocator overhead
     assert!(
         (delta - gz_usage).abs() <= ALLOWANCE,
         "delta {delta} vs usage {gz_usage}"
