@@ -1,6 +1,5 @@
 use crate::score_set::ScoreSet;
 use crate::sets;
-use std::collections::BTreeSet;
 use std::mem::size_of;
 use std::os::raw::c_void;
 
@@ -20,22 +19,14 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
 fn estimate_score_set_usage(set: &ScoreSet) -> usize {
     let mut total = size_of::<ScoreSet>();
 
-    // BTreeMap nodes (by_score) + each BTreeSet structure
-    total += set.by_score.len() * size_of::<(ordered_float::OrderedFloat<f64>, BTreeSet<String>)>();
-
-    for bset in set.by_score.values() {
-        total += size_of::<BTreeSet<String>>();
-        total += bset.len() * size_of::<String>();
-        for m in bset {
-            total += m.capacity();
-        }
-    }
-
-    // FxHashMap buckets (members)
-    total += set.members.capacity() * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
+    // Base storage for members map
+    total += set.members.len() * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
     for m in set.members.keys() {
-        total += m.capacity();
+        total += m.len();
     }
+
+    // Simple overhead allowance per entry
+    total += set.members.len() * 14;
 
     total
 }
