@@ -20,10 +20,7 @@ fn estimate_score_set_usage(set: &ScoreSet) -> usize {
     let mut total = size_of::<ScoreSet>();
 
     // Base storage for members map
-    total += set
-        .members
-        .len()
-        * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
+    total += set.members.len() * size_of::<(String, ordered_float::OrderedFloat<f64>)>();
     for m in set.members.keys() {
         total += m.len();
     }
