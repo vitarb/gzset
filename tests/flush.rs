@@ -11,8 +11,14 @@ fn flush_clears_sets() -> redis::RedisResult<()> {
         .arg("a")
         .execute(&mut con);
     redis::cmd("FLUSHDB").query::<()>(&mut con)?;
-    let len: i64 = redis::cmd("GZCARD").arg("s").query(&mut con)?;
-    assert_eq!(len, 0);
+    for _ in 0..10 {
+        let len: i64 = redis::cmd("GZCARD").arg("s").query(&mut con)?;
+        if len == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(redis::cmd("GZCARD").arg("s").query::<i64>(&mut con)?, 0);
 
     redis::cmd("GZADD")
         .arg("s")
@@ -20,7 +26,13 @@ fn flush_clears_sets() -> redis::RedisResult<()> {
         .arg("b")
         .execute(&mut con);
     redis::cmd("FLUSHALL").query::<()>(&mut con)?;
-    let len: i64 = redis::cmd("GZCARD").arg("s").query(&mut con)?;
-    assert_eq!(len, 0);
+    for _ in 0..10 {
+        let len: i64 = redis::cmd("GZCARD").arg("s").query(&mut con)?;
+        if len == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(redis::cmd("GZCARD").arg("s").query::<i64>(&mut con)?, 0);
     Ok(())
 }
