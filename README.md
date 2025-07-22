@@ -9,6 +9,8 @@ The original goal—exploring a GPU‑accelerated “learned” index—is still
 the roadmap, but we have **parked the GPU work** while we finish a solid,
 CPU‑only reference implementation.
 
+The module uses Valkey’s allocator so memory stats and maxmemory policies work as expected.
+
 ---
 
 ## Why a B‑tree?

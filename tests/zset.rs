@@ -2307,13 +2307,13 @@ fn zrandmember_basics() {
 /* ZRANDMEMBER WITHSCORES */
 #[test]
 fn zrandmember_withscores() {
-    use gzset::FastHashMap as HashMap;
+    use std::collections::HashMap;
     with_families(|ctx| {
         ctx.del("zkey");
         ctx.add("zkey", 1.0, "a").unwrap();
         ctx.add("zkey", 2.0, "b").unwrap();
         let vals = ctx.randmember("zkey", Some(2), true).unwrap();
-        let mut map = HashMap::default();
+        let mut map: HashMap<String, String> = HashMap::new();
         for pair in vals.chunks(2) {
             map.insert(pair[0].clone(), pair[1].clone());
         }

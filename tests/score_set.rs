@@ -1,4 +1,7 @@
-use gzset::ScoreSet;
+#[path = "../src/score_set.rs"]
+#[allow(dead_code)]
+mod score_set;
+use score_set::ScoreSet;
 
 #[test]
 fn lexicographic_order_equal_scores() {
