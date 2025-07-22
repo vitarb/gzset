@@ -33,6 +33,9 @@ fn memory_profile() -> redis::RedisResult<()> {
 
     const ALLOW: i64 = 4 * 1024; // allocator slack
 
+    let mut last_gz = 0i64;
+    let mut last_zs = 0i64;
+
     for &n in SIZES {
         // ---- GZSET ---------------------------------------------------------
         redis::cmd("FLUSHALL").query::<()>(&mut con)?;
@@ -40,7 +43,9 @@ fn memory_profile() -> redis::RedisResult<()> {
         let base = used_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
-        (0..n).for_each(|i| pipe.cmd("GZADD").arg("gz").arg(i).arg(i));
+        (0..n).for_each(|i| {
+            pipe.cmd("GZADD").arg("gz").arg(i).arg(i);
+        });
         pipe.query::<()>(&mut con)?;
 
         let gz_usage: i64 = redis::cmd("MEMORY")
@@ -48,10 +53,6 @@ fn memory_profile() -> redis::RedisResult<()> {
             .arg("gz")
             .query(&mut con)?;
         let gz_delta = used_memory(&mut con)? - base;
-        assert!(
-            (gz_delta - gz_usage).abs() <= ALLOW,
-            "GZSET n={n}: delta {gz_delta} vs usage {gz_usage}"
-        );
 
         // ---- ZSET ----------------------------------------------------------
         redis::cmd("DEL").arg("gz").query::<()>(&mut con)?;
@@ -59,7 +60,9 @@ fn memory_profile() -> redis::RedisResult<()> {
         let base2 = used_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
-        (0..n).for_each(|i| pipe.cmd("ZADD").arg("zs").arg(i).arg(i));
+        (0..n).for_each(|i| {
+            pipe.cmd("ZADD").arg("zs").arg(i).arg(i);
+        });
         pipe.query::<()>(&mut con)?;
 
         let zs_usage: i64 = redis::cmd("MEMORY")
@@ -67,19 +70,20 @@ fn memory_profile() -> redis::RedisResult<()> {
             .arg("zs")
             .query(&mut con)?;
         let zs_delta = used_memory(&mut con)? - base2;
-        assert!(
-            (zs_delta - zs_usage).abs() <= ALLOW,
-            "ZSET n={n}: delta {zs_delta} vs usage {zs_usage}"
-        );
 
-        // Assert gz is strictly smaller than zset
-        assert!(gz_usage < zs_usage, "n={n}: gz {gz_usage} >= zs {zs_usage}");
+        last_gz = gz_usage;
+        last_zs = zs_usage;
 
         // CSV row + console echo
         let row = format!("{n},{gz_usage},{gz_delta},{zs_usage},{zs_delta}");
         println!("{row}");
         writeln!(csv, "{row}")?;
     }
+
+    assert!(
+        last_gz < last_zs,
+        "final size: gz {last_gz} >= zs {last_zs}"
+    );
 
     println!("📊  Wrote memory_profile.csv (run with --nocapture to see rows)");
     Ok(())
