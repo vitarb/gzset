@@ -34,6 +34,7 @@ fn memory_profile() -> redis::RedisResult<()> {
     const ALLOW: i64 = 4 * 1024; // allocator slack
 
     let mut last_gz = 0i64;
+    let mut last_gz_delta = 0i64;
     let mut last_zs = 0i64;
 
     for &n in SIZES {
@@ -72,6 +73,7 @@ fn memory_profile() -> redis::RedisResult<()> {
         let zs_delta = used_memory(&mut con)? - base2;
 
         last_gz = gz_usage;
+        last_gz_delta = gz_delta;
         last_zs = zs_usage;
 
         // CSV row + console echo
@@ -83,6 +85,11 @@ fn memory_profile() -> redis::RedisResult<()> {
     assert!(
         last_gz < last_zs,
         "final size: gz {last_gz} >= zs {last_zs}"
+    );
+
+    assert!(
+        (last_gz_delta - last_gz).abs() <= ALLOW,
+        "allocator delta {last_gz_delta} vs logical {last_gz}"
     );
 
     println!("📊  Wrote memory_profile.csv (run with --nocapture to see rows)");
