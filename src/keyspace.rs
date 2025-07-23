@@ -50,6 +50,11 @@ pub fn clear_all() {
     KEYSPACE.lock().unwrap().clear();
 }
 
+/// Remove a set from the global map without recreating it.
+pub fn erase(key: &str) {
+    KEYSPACE.lock().unwrap().remove(key);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,15 +13,12 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
     if value.is_null() {
         return;
     }
-    let key_ref = Box::from_raw(value as *mut ScoreSetRef);
-    let key = key_ref.key.clone();
-    std::thread::spawn(move || {
-        sets::with_write(None, &key, |set| {
-            set.members.clear();
-            set.by_score.clear();
-        });
-    });
-    drop(key_ref);
+    // Reconstruct the key and remove the entry synchronously.
+    let key = {
+        let boxed = Box::from_raw(value as *mut ScoreSetRef);
+        boxed.key
+    };
+    sets::erase(&key);
 }
 
 /// Approximate heap usage of a ScoreSet.
