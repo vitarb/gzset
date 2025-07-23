@@ -13,12 +13,13 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
     if value.is_null() {
         return;
     }
-    // Reconstruct the key and remove the entry synchronously.
-    let key = {
-        let boxed = Box::from_raw(value as *mut ScoreSetRef);
-        boxed.key
-    };
-    sets::erase(&key);
+    // Convert the raw pointer back to the Rust struct and clear the set.
+    let key_ref = Box::from_raw(value as *mut ScoreSetRef);
+    sets::with_write(None, &key_ref.key, |set| {
+        set.by_score.clear();
+        set.members.clear();
+    });
+    // `key_ref` is dropped here, freeing the struct allocated at creation.
 }
 
 /// Approximate heap usage of a ScoreSet.
