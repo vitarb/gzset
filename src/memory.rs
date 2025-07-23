@@ -10,9 +10,16 @@ pub struct ScoreSetRef {
 
 #[no_mangle]
 pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
-    if !value.is_null() {
-        drop(Box::from_raw(value as *mut ScoreSetRef));
+    if value.is_null() {
+        return;
     }
+    // Convert the raw pointer back to the Rust struct and clear the set.
+    let key_ref = Box::from_raw(value as *mut ScoreSetRef);
+    sets::with_write(None, &key_ref.key, |set| {
+        set.by_score.clear();
+        set.members.clear();
+    });
+    // `key_ref` is dropped here, freeing the struct allocated at creation.
 }
 
 /// Approximate heap usage of a ScoreSet.

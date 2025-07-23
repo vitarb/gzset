@@ -14,7 +14,15 @@ where
     let existed = map.contains_key(key);
     let set = map.entry(key.to_owned()).or_default();
     let result = f(set);
-    if !existed && !set.is_empty() {
+
+    let create_key = !existed && !set.is_empty();
+    let remove_key = set.is_empty();
+    if remove_key {
+        map.remove(key);
+    }
+    drop(map);
+
+    if create_key {
         if let Some(c) = ctx {
             let k = c.create_string(key);
             let redis_key = c.open_key_writable(&k);
@@ -26,14 +34,14 @@ where
             );
         }
     }
-    if set.is_empty() {
-        map.remove(key);
+    if remove_key {
         if let Some(c) = ctx {
             let k = c.create_string(key);
             let redis_key = c.open_key_writable(&k);
             let _ = redis_key.delete();
         }
     }
+
     result
 }
 
