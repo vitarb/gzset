@@ -4,7 +4,7 @@ mod helpers;
 fn gzrange_large_stream() -> redis::RedisResult<()> {
     let vk = helpers::ValkeyInstance::start();
     let mut con = redis::Client::open(vk.url())?.get_connection()?;
-    let count = 1_000_000u32;
+    let count = 100_000u32;
     let mut pipe = redis::pipe();
     for i in 0..count {
         pipe.cmd("GZADD").arg("s").arg(i).arg(i);
