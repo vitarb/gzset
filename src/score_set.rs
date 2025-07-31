@@ -1,8 +1,10 @@
+use hashbrown::HashMap;
 use ordered_float::OrderedFloat;
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::BuildHasherDefault;
 
-pub type FastHashMap<K, V> = FxHashMap<K, V>;
+pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 #[derive(Default)]
 pub struct ScoreSet {

@@ -10,6 +10,7 @@ the roadmap, but we have **parked the GPU work** while we finish a solid,
 CPU‑only reference implementation.
 
 The module uses Valkey’s allocator so memory stats and maxmemory policies work as expected.
+Each `GZSET` key owns its B-tree data directly, so `MEMORY USAGE` reflects the exact footprint (aside from allocator fragmentation).
 
 ---
 
@@ -33,7 +34,7 @@ The module uses Valkey’s allocator so memory stats and maxmemory policies work
 | RDB/AOF persistence | 🚧   | Stubbed; data is in‑memory only today |
 | GPU‑learned index   | ⏸   | Prototype branch retained, not in `main` |
 | Cluster support     | ❌   | Single‑node only for now |
-| MEMORY USAGE key | returns approximate bytes | ✅ |
+| MEMORY USAGE key | reports exact usage | ✅ |
 
 ---
 
@@ -116,9 +117,8 @@ Differences from core Redis:
       │                       │
         │  • GZADD… commands    │
         │  • B‑tree per key     │
-        │  • Global Mutex<HashMap> │
-      └───────────┬───────────┘
-                  │
+     └───────────┬───────────┘
+                 │
       ┌───────────▼───────────┐
       │  ScoreSet (Rust)      │  in‑memory structure
       │  by_score: BTreeMap   │───► OrderedFloat<f64> → BTreeSet<String>
@@ -126,10 +126,9 @@ Differences from core Redis:
       └───────────────────────┘
 ```
 
-The module keeps its state in a process-wide `Mutex<HashMap>` protected by
-`once_cell::sync::Lazy`.  Commands lock this map whenever they read or write a
-set and it is cleared when Valkey executes `FLUSHDB` or `FLUSHALL`.
-The module subscribes to Valkey's FLUSHDB event and clears its keyspace when FLUSHDB or FLUSHALL run.
+Each set lives as a Valkey key holding a `ScoreSet` value. Commands open the
+key directly and operate on its data; no global map or flush handler is needed.
+Valkey handles key eviction and expiry automatically.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.

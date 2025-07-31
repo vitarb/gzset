@@ -1,6 +1,5 @@
 use crate::format::{fmt_f64, with_fmt_buf};
-use crate::keyspace as sets;
-use crate::score_set::FastHashMap;
+use crate::score_set::{FastHashMap, ScoreSet};
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_void};
@@ -40,6 +39,42 @@ unsafe extern "C" fn gzset_rdb_load(_io: *mut raw::RedisModuleIO, _encver: c_int
 }
 
 unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c_void) {}
+
+fn with_set_write<F, R>(ctx: &Context, key: &str, f: F) -> rm::RedisResult<R>
+where
+    F: FnOnce(&mut ScoreSet) -> R,
+{
+    let keyname = ctx.create_string(key);
+    let rkey = ctx.open_key_writable(&keyname);
+    if rkey.get_value::<ScoreSet>(&GZSET_TYPE)?.is_none() {
+        rkey.set_value(&GZSET_TYPE, ScoreSet::default())?;
+    }
+    let (res, empty) = {
+        let set = rkey.get_value::<ScoreSet>(&GZSET_TYPE)?.unwrap();
+        let r = f(set);
+        (r, set.is_empty())
+    };
+    if empty {
+        drop(rkey);
+        let rkey = ctx.open_key_writable(&keyname);
+        rkey.delete()?;
+    }
+    Ok(res)
+}
+
+fn with_set_read<F, R>(ctx: &Context, key: &str, f: F) -> rm::RedisResult<R>
+where
+    F: FnOnce(&ScoreSet) -> R,
+{
+    let keyname = ctx.create_string(key);
+    let rkey = ctx.open_key(&keyname);
+    if let Some(set) = rkey.get_value::<ScoreSet>(&GZSET_TYPE)? {
+        Ok(f(set))
+    } else {
+        let tmp = ScoreSet::default();
+        Ok(f(&tmp))
+    }
+}
 
 macro_rules! redis_command {
     (
@@ -92,7 +127,7 @@ fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let score: f64 = args[2].parse_float()?;
     let member = args[3].try_as_str()?;
 
-    let added = sets::with_write(Some(_ctx), key, |s| s.insert(score, member));
+    let added = with_set_write(_ctx, key, |s| s.insert(score, member))?;
     Ok((added as i64).into())
 }
 
@@ -102,7 +137,7 @@ fn gzrank(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    if let Some(rank) = sets::with_read(key, |s| s.rank(member)) {
+    if let Some(rank) = with_set_read(_ctx, key, |s| s.rank(member))? {
         return Ok((rank as i64).into());
     }
     Ok(RedisValue::Null)
@@ -120,7 +155,7 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
     };
     let start = parse_index(&args[2])?;
     let stop = parse_index(&args[3])?;
-    sets::with_read(key, |s| {
+    with_set_read(ctx, key, |s| {
         let mut it = s.iter_range(start, stop);
         unsafe {
             raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.len() as c_long);
@@ -132,7 +167,7 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
                 );
             }
         }
-    });
+    })?;
     Ok(RedisValue::NoReply)
 }
 
@@ -142,7 +177,7 @@ fn gzrem(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    let removed = sets::with_write(Some(_ctx), key, |s| s.remove(member));
+    let removed = with_set_write(_ctx, key, |s| s.remove(member))?;
     Ok((removed as i64).into())
 }
 
@@ -152,7 +187,7 @@ fn gzscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let member = args[2].try_as_str()?;
-    if let Some(score) = sets::with_read(key, |s| s.score(member)) {
+    if let Some(score) = with_set_read(_ctx, key, |s| s.score(member))? {
         return Ok(score.into());
     }
     Ok(RedisValue::Null)
@@ -163,7 +198,7 @@ fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
-    let len = sets::with_read(key, |s| s.members.len() as i64);
+    let len = with_set_read(_ctx, key, |s| s.members.len() as i64)?;
     Ok(len.into())
 }
 
@@ -183,7 +218,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
-    let result = sets::with_write(Some(ctx), key, |set| {
+    let result = with_set_write(ctx, key, |set| {
         let mut out = Vec::new();
         for _ in 0..count {
             let mut entry = if min {
@@ -218,7 +253,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
             with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
         }
         out
-    });
+    })?;
     if result.is_empty() {
         if count == 1 {
             Ok(RedisValue::Null)
@@ -238,7 +273,7 @@ fn gzpopmax(ctx: &Context, args: Vec<RedisString>) -> Result {
     gzpop_generic(ctx, args, false)
 }
 
-fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() < 2 || args.len() > 4 {
         return Err(RedisError::WrongArity);
     }
@@ -269,7 +304,7 @@ fn gzrandmember(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
 
-    let items = sets::with_read(key, |s| s.all_items());
+    let items = with_set_read(ctx, key, |s| s.all_items())?;
     if items.is_empty() {
         return if count.is_some() {
             Ok(RedisValue::Array(Vec::new()))
@@ -328,7 +363,7 @@ fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let key = args[1].try_as_str()?;
     let members: Vec<_> = args[2..].iter().map(|m| m.try_as_str().unwrap()).collect();
     let mut out = Vec::new();
-    sets::with_read(key, |set| {
+    with_set_read(_ctx, key, |set| {
         for m in &members {
             if let Some(score) = set.score(m) {
                 with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
@@ -336,7 +371,7 @@ fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
                 out.push(RedisValue::Null);
             }
         }
-    });
+    })?;
     Ok(RedisValue::Array(out))
 }
 
@@ -355,11 +390,11 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     for k in keys {
-        sets::with_read(k, |set| {
+        with_set_read(_ctx, k, |set| {
             for (score, member) in set.all_items() {
                 *agg.entry(member).or_insert(0.0) += score;
             }
-        });
+        })?;
     }
     let mut items: Vec<_> = agg.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
@@ -385,16 +420,16 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut keys_vec: Vec<_> = keys.clone();
-    keys_vec.sort_by_key(|k| sets::with_read(k, |s| s.members.len()));
-    let first_members: Vec<(String, f64)> = sets::with_read(keys_vec[0], |s| {
+    keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.members.len()).unwrap());
+    let first_members: Vec<(String, f64)> = with_set_read(_ctx, keys_vec[0], |s| {
         s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
-    });
+    })?;
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     for (m, sc) in &first_members {
         let mut sum = *sc;
         let mut present = true;
         for k in &keys_vec[1..] {
-            match sets::with_read(k, |set| set.members.get(m).copied()) {
+            match with_set_read(_ctx, k, |set| set.members.get(m).copied())? {
                 Some(other_sc) => sum += other_sc.0,
                 None => {
                     present = false;
@@ -429,14 +464,14 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
-    let first_items: Vec<(String, f64)> = sets::with_read(keys[0], |s| {
+    let first_items: Vec<(String, f64)> = with_set_read(_ctx, keys[0], |s| {
         s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
-    });
+    })?;
     let mut diff: FastHashMap<String, f64> = FastHashMap::default();
     for (m, sc) in first_items {
         let mut found = false;
         for &k in &keys[1..] {
-            if sets::with_read(k, |set| set.members.contains_key(&m)) {
+            if with_set_read(_ctx, k, |set| set.members.contains_key(&m))? {
                 found = true;
                 break;
             }
@@ -466,8 +501,8 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     } else {
         None
     };
-    let len1 = sets::with_read(key1, |s| s.members.len());
-    let len2 = sets::with_read(key2, |s| s.members.len());
+    let len1 = with_set_read(_ctx, key1, |s| s.members.len())?;
+    let len2 = with_set_read(_ctx, key2, |s| s.members.len())?;
     if len1 == 0 || len2 == 0 {
         return Ok(0i64.into());
     }
@@ -477,10 +512,10 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
         (key2, key1)
     };
     let small_members: Vec<String> =
-        sets::with_read(small_key, |s| s.members.keys().cloned().collect());
+        with_set_read(_ctx, small_key, |s| s.members.keys().cloned().collect())?;
     let mut count = 0i64;
     for m in small_members {
-        let present = sets::with_read(big_key, |set| set.members.contains_key(&m));
+        let present = with_set_read(_ctx, big_key, |set| set.members.contains_key(&m))?;
         if present {
             count += 1;
             if let Some(l) = limit {
@@ -499,7 +534,7 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let cursor: u64 = args[2].parse_integer()? as u64;
-    let items = sets::with_read(key, |s| s.all_items());
+    let items = with_set_read(_ctx, key, |s| s.all_items())?;
     if items.is_empty() {
         return Ok(RedisValue::Array(vec![
             "0".into(),
@@ -556,29 +591,6 @@ pub unsafe fn register_commands(ctx: *mut raw::RedisModuleCtx) -> rm::Status {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn gzset__on_flush(
-    _ctx: *mut raw::RedisModuleCtx,
-    _event: raw::RedisModuleEvent,
-    _sub: u64,
-    _data: *mut c_void,
-) {
-    sets::clear_all();
-}
-
-unsafe extern "C" fn gzset_cmd_filter(fctx: *mut raw::RedisModuleCommandFilterCtx) {
-    let arg0 = raw::RedisModule_CommandFilterArgGet.unwrap()(fctx, 0);
-    if !arg0.is_null() {
-        if let Ok(name) = rm::RedisString::from_ptr(arg0) {
-            if name.eq_ignore_ascii_case("flushdb") || name.eq_ignore_ascii_case("flushall") {
-                sets::clear_all();
-            }
-        }
-    }
-}
-
-const REDISMODULE_EVENT_FLUSHDB_VERSION: u64 = 1;
-
 pub unsafe extern "C" fn gzset_on_load(
     ctx: *mut raw::RedisModuleCtx,
     _argv: *mut *mut raw::RedisModuleString,
@@ -598,18 +610,6 @@ pub unsafe extern "C" fn gzset_on_load(
         return raw::Status::Err as c_int;
     }
     if register_commands(ctx) == rm::Status::Err {
-        return raw::Status::Err as c_int;
-    }
-    if raw::RedisModule_RegisterCommandFilter.unwrap()(ctx, Some(gzset_cmd_filter), 0).is_null() {
-        return raw::Status::Err as c_int;
-    }
-    const FLUSH_EVENT: raw::RedisModuleEvent = raw::RedisModuleEvent {
-        id: raw::REDISMODULE_EVENT_FLUSHDB,
-        dataver: REDISMODULE_EVENT_FLUSHDB_VERSION,
-    };
-    if raw::RedisModule_SubscribeToServerEvent.unwrap()(ctx, FLUSH_EVENT, Some(gzset__on_flush))
-        == raw::Status::Err as c_int
-    {
         return raw::Status::Err as c_int;
     }
     raw::Status::Ok as c_int

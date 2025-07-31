@@ -35,6 +35,7 @@ smallvec = { version = "1", features = ["union"] }
 anyhow = "1"
 ryu = "1"
 rustc-hash = "1"
+hashbrown = { version = "0.14", features = ["raw"] }
 clap = { version = "4", features = ["derive"] }
 portpicker = "0.1"
 redis = "0.25"
