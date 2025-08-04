@@ -1,7 +1,4 @@
-#[path = "../src/score_set.rs"]
-#[allow(dead_code)]
-mod score_set;
-use score_set::ScoreSet;
+use gzset::ScoreSet;
 
 #[test]
 fn lexicographic_order_equal_scores() {
@@ -12,6 +9,18 @@ fn lexicographic_order_equal_scores() {
     let items: Vec<_> = set.range_iter(0, -1);
     let members: Vec<_> = items.into_iter().map(|(_, m)| m).collect();
     assert_eq!(members, ["a", "b", "c"]);
+}
+
+#[test]
+fn lexicographic_order_reinsert_equal_scores() {
+    let mut set = ScoreSet::default();
+    set.insert(1.0, "b");
+    set.insert(1.0, "a");
+    set.remove("b");
+    set.insert(1.0, "b");
+    let items: Vec<_> = set.range_iter(0, -1);
+    let members: Vec<_> = items.into_iter().map(|(_, m)| m).collect();
+    assert_eq!(members, ["a", "b"]);
 }
 
 #[test]

@@ -6,10 +6,13 @@ static GLOBAL: redis_module::alloc::RedisAlloc = redis_module::alloc::RedisAlloc
 
 pub use crate::{
     command::register_commands,
-    score_set::{FastHashMap, ScoreIter, ScoreSet},
+    format::{fmt_f64, with_fmt_buf},
+    pool::{FastHashMap, MemberId, StringPool},
+    score_set::{ScoreIter, ScoreSet},
 };
 
 mod command;
 mod format;
 mod memory;
+mod pool;
 mod score_set;

@@ -1,5 +1,5 @@
 use crate::format::{fmt_f64, with_fmt_buf};
-use crate::score_set::{FastHashMap, ScoreSet};
+use crate::{score_set::ScoreSet, FastHashMap};
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_void};
@@ -221,35 +221,39 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
     let result = with_set_write(ctx, key, |set| {
         let mut out = Vec::new();
         for _ in 0..count {
-            let mut entry = if min {
-                match set.by_score.first_entry() {
-                    Some(e) => e,
-                    None => break,
-                }
-            } else {
-                match set.by_score.last_entry() {
-                    Some(e) => e,
-                    None => break,
-                }
-            };
-            let score_key = *entry.key();
-            let (member, remove_score) = {
-                let set_ref = entry.get_mut();
-                let m = if min {
-                    let m = set_ref.iter().next().unwrap().clone();
-                    set_ref.take(&m).unwrap()
+            let (score_key, member) = {
+                let mut entry = if min {
+                    match set.by_score.first_entry() {
+                        Some(e) => e,
+                        None => break,
+                    }
                 } else {
-                    let m = set_ref.iter().next_back().unwrap().clone();
-                    set_ref.take(&m).unwrap()
+                    match set.by_score.last_entry() {
+                        Some(e) => e,
+                        None => break,
+                    }
                 };
-                let empty = set_ref.is_empty();
-                (m, empty)
+                let score_key = *entry.key();
+                let (member, remove_score) = {
+                    let set_ref = entry.get_mut();
+                    let m = if min {
+                        let m = *set_ref.iter().next().unwrap();
+                        set_ref.take(m).unwrap()
+                    } else {
+                        let m = *set_ref.iter().next_back().unwrap();
+                        set_ref.take(m).unwrap()
+                    };
+                    let empty = set_ref.is_empty();
+                    (m, empty)
+                };
+                if remove_score {
+                    entry.remove_entry();
+                }
+                (score_key, member)
             };
-            if remove_score {
-                entry.remove_entry();
-            }
-            set.members.remove(&member);
-            out.push(member.into());
+            let id = set.pool.lookup(member).unwrap();
+            set.members.remove(&id);
+            out.push(member.to_owned().into());
             with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
         }
         out
@@ -421,16 +425,15 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut keys_vec: Vec<_> = keys.clone();
     keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.members.len()).unwrap());
-    let first_members: Vec<(String, f64)> = with_set_read(_ctx, keys_vec[0], |s| {
-        s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
-    })?;
+    let first_members: Vec<(String, f64)> =
+        with_set_read(_ctx, keys_vec[0], |s| s.members_with_scores())?;
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     for (m, sc) in &first_members {
         let mut sum = *sc;
         let mut present = true;
         for k in &keys_vec[1..] {
-            match with_set_read(_ctx, k, |set| set.members.get(m).copied())? {
-                Some(other_sc) => sum += other_sc.0,
+            match with_set_read(_ctx, k, |set| set.score(m))? {
+                Some(other_sc) => sum += other_sc,
                 None => {
                     present = false;
                     break;
@@ -464,14 +467,13 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
-    let first_items: Vec<(String, f64)> = with_set_read(_ctx, keys[0], |s| {
-        s.members.iter().map(|(m, sc)| (m.clone(), sc.0)).collect()
-    })?;
+    let first_items: Vec<(String, f64)> =
+        with_set_read(_ctx, keys[0], |s| s.members_with_scores())?;
     let mut diff: FastHashMap<String, f64> = FastHashMap::default();
     for (m, sc) in first_items {
         let mut found = false;
         for &k in &keys[1..] {
-            if with_set_read(_ctx, k, |set| set.members.contains_key(&m))? {
+            if with_set_read(_ctx, k, |set| set.contains(&m))? {
                 found = true;
                 break;
             }
@@ -511,11 +513,10 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     } else {
         (key2, key1)
     };
-    let small_members: Vec<String> =
-        with_set_read(_ctx, small_key, |s| s.members.keys().cloned().collect())?;
+    let small_members: Vec<String> = with_set_read(_ctx, small_key, |s| s.member_names())?;
     let mut count = 0i64;
     for m in small_members {
-        let present = with_set_read(_ctx, big_key, |set| set.members.contains_key(&m))?;
+        let present = with_set_read(_ctx, big_key, |set| set.contains(&m))?;
         if present {
             count += 1;
             if let Some(l) = limit {

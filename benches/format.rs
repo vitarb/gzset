@@ -6,7 +6,10 @@ fn bench_format(c: &mut Criterion) {
     group.bench_function("fmt_f64", |b| {
         b.iter(|| {
             for _ in 0..1_000_000 {
-                with_fmt_buf(|buf| black_box(fmt_f64(buf, black_box(42.123456))));
+                with_fmt_buf(|buf| {
+                    let s = fmt_f64(buf, black_box(42.123456));
+                    black_box(s);
+                });
             }
         })
     });

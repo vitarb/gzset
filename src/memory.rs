@@ -56,26 +56,30 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
         total += size_class(16 + buckets);
     }
 
-    for s in set.members.keys() {
-        total += ms(s.as_ptr() as *const _);
-    }
-
-    for bucket in set.by_score.values() {
-        for s in bucket {
-            total += ms(s.as_ptr() as *const _);
-        }
-    }
-
     total += EXTRA_PER_ELEM * set.members.len();
 
     let map_nodes = btree_nodes(set.by_score.len());
-    total += map_nodes * size_class(map_node_bytes::<OrderedFloat<f64>, BTreeSet<String>>());
+    total += map_nodes * size_class(map_node_bytes::<OrderedFloat<f64>, BTreeSet<&'static str>>());
     let internal_nodes = map_nodes.saturating_sub(1);
     if internal_nodes > 0 {
         total += internal_nodes * size_class((BTREE_NODE_CAP + 1) * size_of::<*const ()>());
     }
     for bucket in set.by_score.values() {
-        total += btree_nodes(bucket.len()) * size_class(set_node_bytes::<String>());
+        total += btree_nodes(bucket.len()) * size_class(set_node_bytes::<&'static str>());
+    }
+
+    let table = set.pool.map.raw_table();
+    if table.capacity() > 0 {
+        let (ptr, _) = table.allocation_info();
+        total += ms(ptr.as_ptr().cast());
+        let buckets = table.buckets();
+        total += size_class(16 + buckets);
+    }
+    if set.pool.strings.capacity() > 0 {
+        total += ms(set.pool.strings.as_ptr() as *const _);
+    }
+    for s in &set.pool.strings {
+        total += ms(s.as_ptr() as *const _);
     }
 
     total

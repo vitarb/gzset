@@ -121,14 +121,19 @@ Differences from core Redis:
                  │
       ┌───────────▼───────────┐
       │  ScoreSet (Rust)      │  in‑memory structure
-      │  by_score: BTreeMap   │───► OrderedFloat<f64> → BTreeSet<String>
-      │  members: HashMap     │───► String → score (O(1) lookup)
+      │  by_score: BTreeMap   │───► OrderedFloat<f64> → BTreeSet<&'static str>
+      │  members: HashMap     │───► MemberId → score (O(1) lookup)
+      │  pool: StringPool     │───► MemberId ↔ &'static str
       └───────────────────────┘
 ```
 
 Each set lives as a Valkey key holding a `ScoreSet` value. Commands open the
 key directly and operate on its data; no global map or flush handler is needed.
 Valkey handles key eviction and expiry automatically.
+
+> **Note:** member strings are interned in a per‑set pool and are not
+> reclaimed when removed. Long‑lived sets that churn will retain the old
+> strings until the entire set is dropped.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.

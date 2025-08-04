@@ -1,28 +1,30 @@
-use hashbrown::HashMap;
 use ordered_float::OrderedFloat;
-use rustc_hash::FxHasher;
 use std::collections::{BTreeMap, BTreeSet};
-use std::hash::BuildHasherDefault;
 
-pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+use crate::{
+    pool::{MemberId, StringPool},
+    FastHashMap,
+};
 
 #[derive(Default)]
 pub struct ScoreSet {
-    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, BTreeSet<String>>,
-    pub(crate) members: FastHashMap<String, OrderedFloat<f64>>,
+    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, BTreeSet<&'static str>>,
+    pub(crate) members: FastHashMap<MemberId, OrderedFloat<f64>>,
+    pub(crate) pool: StringPool,
 }
 
 #[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
-    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<String>>,
+    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<&'static str>>,
     front_current: Option<(
-        std::collections::btree_set::Iter<'a, String>,
+        std::collections::btree_set::Iter<'a, &'static str>,
         OrderedFloat<f64>,
     )>,
-    back_outer:
-        std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<String>>>,
+    back_outer: std::iter::Rev<
+        std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BTreeSet<&'static str>>,
+    >,
     back_current: Option<(
-        std::collections::btree_set::Iter<'a, String>,
+        std::collections::btree_set::Iter<'a, &'static str>,
         OrderedFloat<f64>,
     )>,
     remaining_front_skip: usize,
@@ -34,7 +36,7 @@ pub struct ScoreIter<'a> {
 
 impl<'a> ScoreIter<'a> {
     fn new(
-        map: &'a BTreeMap<OrderedFloat<f64>, BTreeSet<String>>,
+        map: &'a BTreeMap<OrderedFloat<f64>, BTreeSet<&'static str>>,
         start: usize,
         stop: usize,
         len: usize,
@@ -52,7 +54,7 @@ impl<'a> ScoreIter<'a> {
         }
     }
 
-    fn empty(map: &'a BTreeMap<OrderedFloat<f64>, BTreeSet<String>>) -> Self {
+    fn empty(map: &'a BTreeMap<OrderedFloat<f64>, BTreeSet<&'static str>>) -> Self {
         Self {
             front_outer: map.iter(),
             front_current: None,
@@ -87,7 +89,7 @@ impl<'a> Iterator for ScoreIter<'a> {
                         continue;
                     }
                     self.yielded_front += 1;
-                    return Some((member.as_str(), score.0));
+                    return Some((*member, score.0));
                 }
                 self.front_current = None;
             }
@@ -119,7 +121,7 @@ impl<'a> DoubleEndedIterator for ScoreIter<'a> {
                         continue;
                     }
                     self.yielded_back += 1;
-                    return Some((member.as_str(), score.0));
+                    return Some((*member, score.0));
                 }
                 self.back_current = None;
             }
@@ -142,11 +144,13 @@ impl<'a> ExactSizeIterator for ScoreIter<'a> {
 impl ScoreSet {
     pub fn insert(&mut self, score: f64, member: &str) -> bool {
         let key = OrderedFloat(score);
-        match self.members.insert(member.to_owned(), key) {
+        let id = self.pool.intern(member);
+        let name = self.pool.get_static(id);
+        match self.members.insert(id, key) {
             Some(old) if old == key => return false,
             Some(old) => {
                 if let Some(set) = self.by_score.get_mut(&old) {
-                    set.remove(member);
+                    set.remove(name);
                     if set.is_empty() {
                         self.by_score.remove(&old);
                     }
@@ -154,15 +158,16 @@ impl ScoreSet {
             }
             None => {}
         }
-        self.by_score
-            .entry(key)
-            .or_default()
-            .insert(member.to_owned());
+        self.by_score.entry(key).or_default().insert(name);
         true
     }
 
     pub fn remove(&mut self, member: &str) -> bool {
-        if let Some(score) = self.members.remove(member) {
+        let id = match self.pool.lookup(member) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(score) = self.members.remove(&id) {
             if let Some(set) = self.by_score.get_mut(&score) {
                 set.remove(member);
                 if set.is_empty() {
@@ -176,16 +181,19 @@ impl ScoreSet {
     }
 
     pub fn score(&self, member: &str) -> Option<f64> {
-        self.members.get(member).map(|s| s.0)
+        let id = self.pool.lookup(member)?;
+        self.members.get(&id).map(|s| s.0)
     }
 
     pub fn rank(&self, member: &str) -> Option<usize> {
-        let target = *self.members.get(member)?;
+        let id = self.pool.lookup(member)?;
+        let target = *self.members.get(&id)?;
+        let name = self.pool.get(id);
         let mut idx = 0usize;
         for (score, set) in &self.by_score {
             if *score == target {
                 for m in set {
-                    if m == member {
+                    if *m == name {
                         return Some(idx);
                     }
                     idx += 1;
@@ -229,14 +237,38 @@ impl ScoreSet {
         self.members.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.members.len()
+    }
+
     pub fn all_items(&self) -> Vec<(f64, String)> {
         let mut out = Vec::new();
         for (score, set) in &self.by_score {
             for m in set {
-                out.push((score.0, m.clone()));
+                out.push((score.0, (*m).to_owned()));
             }
         }
         out
+    }
+
+    pub fn member_names(&self) -> Vec<String> {
+        self.members
+            .keys()
+            .map(|id| self.pool.get(*id).to_owned())
+            .collect()
+    }
+
+    pub fn members_with_scores(&self) -> Vec<(String, f64)> {
+        self.members
+            .iter()
+            .map(|(id, sc)| (self.pool.get(*id).to_owned(), sc.0))
+            .collect()
+    }
+
+    pub fn contains(&self, member: &str) -> bool {
+        self.pool
+            .lookup(member)
+            .is_some_and(|id| self.members.contains_key(&id))
     }
 
     #[cfg(any(test, feature = "bench"))]
@@ -250,18 +282,19 @@ impl ScoreSet {
             };
             let set = entry.get_mut();
             let member = if min {
-                let m = set.iter().next().unwrap().clone();
-                set.take(&m).unwrap()
+                let m = *set.iter().next().unwrap();
+                set.take(m).unwrap()
             } else {
-                let m = set.iter().next_back().unwrap().clone();
-                set.take(&m).unwrap()
+                let m = *set.iter().next_back().unwrap();
+                set.take(m).unwrap()
             };
             let empty = set.is_empty();
             if empty {
                 entry.remove_entry();
             }
-            self.members.remove(&member);
-            out.push(member);
+            let id = self.pool.lookup(member).unwrap();
+            self.members.remove(&id);
+            out.push(member.to_owned());
         }
         out
     }
