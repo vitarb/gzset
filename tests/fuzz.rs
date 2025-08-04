@@ -1,9 +1,6 @@
 mod helpers;
-#[path = "../src/score_set.rs"]
-#[allow(dead_code)]
-mod score_set;
+use gzset::ScoreSet;
 use quickcheck::quickcheck;
-use score_set::ScoreSet;
 
 quickcheck! {
     fn insert_remove_roundtrip(pairs: Vec<(f64, String)>) -> bool {
