@@ -9,7 +9,7 @@ The original goal—exploring a GPU‑accelerated “learned” index—is still
 the roadmap, but we have **parked the GPU work** while we finish a solid,
 CPU‑only reference implementation.
 
-The module uses Valkey’s allocator so memory stats and maxmemory policies work as expected.
+When built with the `redis-module` feature, the module uses Valkey’s allocator so memory stats and maxmemory policies work as expected.
 Each `GZSET` key owns its B-tree data directly, so `MEMORY USAGE` reflects the exact footprint (aside from allocator fragmentation).
 
 ---

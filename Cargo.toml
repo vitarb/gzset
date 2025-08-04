@@ -50,4 +50,5 @@ criterion = "0.5"
 [features]
 bench = []
 mem_profile = []
+redis-module = []
 

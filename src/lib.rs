@@ -1,6 +1,6 @@
 #![deny(clippy::uninlined_format_args, clippy::to_string_in_format_args)]
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "redis-module"))]
 #[global_allocator]
 static GLOBAL: redis_module::alloc::RedisAlloc = redis_module::alloc::RedisAlloc;
 
