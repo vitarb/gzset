@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
 use crate::{
+    compact_table::CompactTable,
     pool::{MemberId, StringPool},
-    FastHashMap,
 };
 
 type Bucket = SmallVec<[MemberId; 4]>;
@@ -12,7 +12,7 @@ type Bucket = SmallVec<[MemberId; 4]>;
 #[derive(Default)]
 pub struct ScoreSet {
     pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
-    pub(crate) members: FastHashMap<MemberId, OrderedFloat<f64>>,
+    pub(crate) members: CompactTable,
     pub(crate) pool: StringPool,
 }
 
@@ -150,21 +150,24 @@ impl ScoreSet {
         let key = OrderedFloat(score);
         let id = self.pool.intern(member);
         let name = self.pool.get(id);
-        match self.members.insert(id, key) {
-            Some(old) if old == key => return false,
-            Some(old) => {
-                if let Some(bucket) = self.by_score.get_mut(&old) {
+        let old = self.members.get(id);
+        if !self.members.insert(id, score) {
+            if let Some(old_score) = old {
+                let old_key = OrderedFloat(old_score);
+                if old_key == key {
+                    return false;
+                }
+                if let Some(bucket) = self.by_score.get_mut(&old_key) {
                     if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
                         bucket.remove(pos);
                     }
                     if bucket.is_empty() {
-                        self.by_score.remove(&old);
+                        self.by_score.remove(&old_key);
                     } else if bucket.spilled() && bucket.len() <= 4 {
                         bucket.shrink_to_fit();
                     }
                 }
             }
-            None => {}
         }
         let bucket = self.by_score.entry(key).or_default();
         match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
@@ -181,7 +184,11 @@ impl ScoreSet {
             Some(id) => id,
             None => return false,
         };
-        if let Some(score) = self.members.remove(&id) {
+        let score = match self.members.get(id) {
+            Some(s) => OrderedFloat(s),
+            None => return false,
+        };
+        if self.members.remove(id) {
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
                     bucket.remove(pos);
@@ -200,12 +207,12 @@ impl ScoreSet {
 
     pub fn score(&self, member: &str) -> Option<f64> {
         let id = self.pool.lookup(member)?;
-        self.members.get(&id).map(|s| s.0)
+        self.members.get(id)
     }
 
     pub fn rank(&self, member: &str) -> Option<usize> {
         let id = self.pool.lookup(member)?;
-        let target = *self.members.get(&id)?;
+        let target = OrderedFloat(self.members.get(id)?);
         let mut idx = 0usize;
         for (score, bucket) in &self.by_score {
             if *score == target {
@@ -257,7 +264,7 @@ impl ScoreSet {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.members.is_empty()
+        self.members.len() == 0
     }
 
     pub fn len(&self) -> usize {
@@ -276,22 +283,22 @@ impl ScoreSet {
 
     pub fn member_names(&self) -> Vec<String> {
         self.members
-            .keys()
-            .map(|id| self.pool.get(*id).to_owned())
+            .iter()
+            .map(|(id, _)| self.pool.get(id).to_owned())
             .collect()
     }
 
     pub fn members_with_scores(&self) -> Vec<(String, f64)> {
         self.members
             .iter()
-            .map(|(id, sc)| (self.pool.get(*id).to_owned(), sc.0))
+            .map(|(id, sc)| (self.pool.get(id).to_owned(), sc))
             .collect()
     }
 
     pub fn contains(&self, member: &str) -> bool {
         self.pool
             .lookup(member)
-            .is_some_and(|id| self.members.contains_key(&id))
+            .is_some_and(|id| self.members.get(id).is_some())
     }
 
     #[doc(hidden)]
@@ -321,7 +328,7 @@ impl ScoreSet {
             } else if bucket.spilled() && bucket.len() <= 4 {
                 bucket.shrink_to_fit();
             }
-            self.members.remove(&id);
+            self.members.remove(id);
             out.push(self.pool.get(id).to_owned());
         }
         out
