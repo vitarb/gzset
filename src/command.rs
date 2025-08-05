@@ -252,7 +252,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
                 }
                 (score_key, id)
             };
-            set.members.remove(&id);
+            set.members.remove(id);
             let member = set.pool.get(id);
             out.push(member.to_owned().into());
             with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
