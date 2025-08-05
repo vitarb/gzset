@@ -46,3 +46,33 @@ fn pop_min_max_duplicates() {
     }
     assert_eq!(maxs, ["c", "b", "a"]);
 }
+
+#[test]
+fn insertion_order_five_members() {
+    let mut set = ScoreSet::default();
+    for m in ["e", "d", "c", "b", "a"] {
+        set.insert(1.0, m);
+    }
+    let items: Vec<_> = set.range_iter(0, -1);
+    let members: Vec<_> = items.into_iter().map(|(_, m)| m).collect();
+    assert_eq!(members, ["a", "b", "c", "d", "e"]);
+}
+
+#[test]
+fn duplicate_reject() {
+    let mut set = ScoreSet::default();
+    assert!(set.insert(1.0, "a"));
+    assert!(!set.insert(1.0, "a"));
+}
+
+#[test]
+fn grow_and_shrink_bucket() {
+    let mut set = ScoreSet::default();
+    for m in ["a", "b", "c", "d", "e"] {
+        set.insert(1.0, m);
+    }
+    assert!(set.bucket_capacity_for_test(1.0).is_some_and(|c| c > 4));
+    set.remove("a");
+    set.remove("b");
+    assert_eq!(set.bucket_capacity_for_test(1.0), Some(4));
+}

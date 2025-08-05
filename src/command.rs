@@ -221,7 +221,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
     let result = with_set_write(ctx, key, |set| {
         let mut out = Vec::new();
         for _ in 0..count {
-            let (score_key, member) = {
+            let (score_key, id) = {
                 let mut entry = if min {
                     match set.by_score.first_entry() {
                         Some(e) => e,
@@ -234,25 +234,26 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
                     }
                 };
                 let score_key = *entry.key();
-                let (member, remove_score) = {
-                    let set_ref = entry.get_mut();
-                    let m = if min {
-                        let m = *set_ref.iter().next().unwrap();
-                        set_ref.take(m).unwrap()
+                let (id, remove_score) = {
+                    let bucket = entry.get_mut();
+                    let id = if min {
+                        bucket.remove(0)
                     } else {
-                        let m = *set_ref.iter().next_back().unwrap();
-                        set_ref.take(m).unwrap()
+                        bucket.pop().unwrap()
                     };
-                    let empty = set_ref.is_empty();
-                    (m, empty)
+                    let empty = bucket.is_empty();
+                    if !empty && bucket.spilled() && bucket.len() <= 4 {
+                        bucket.shrink_to_fit();
+                    }
+                    (id, empty)
                 };
                 if remove_score {
                     entry.remove_entry();
                 }
-                (score_key, member)
+                (score_key, id)
             };
-            let id = set.pool.lookup(member).unwrap();
             set.members.remove(&id);
+            let member = set.pool.get(id);
             out.push(member.to_owned().into());
             with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
         }

@@ -1,7 +1,7 @@
-use crate::score_set::ScoreSet;
+use crate::{pool::MemberId, score_set::ScoreSet};
 use ordered_float::OrderedFloat;
 use redis_module::raw::RedisModule_MallocSize;
-use std::collections::BTreeSet;
+use smallvec::SmallVec;
 use std::mem::size_of;
 use std::os::raw::c_void;
 
@@ -26,11 +26,6 @@ fn btree_nodes(elem: usize) -> usize {
 #[inline]
 fn map_node_bytes<K, V>() -> usize {
     BTREE_NODE_HDR + BTREE_NODE_CAP * (size_of::<K>() + size_of::<V>())
-}
-
-#[inline]
-fn set_node_bytes<K>() -> usize {
-    BTREE_NODE_HDR + BTREE_NODE_CAP * size_of::<K>()
 }
 
 #[inline]
@@ -59,13 +54,15 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
     total += EXTRA_PER_ELEM * set.members.len();
 
     let map_nodes = btree_nodes(set.by_score.len());
-    total += map_nodes * size_class(map_node_bytes::<OrderedFloat<f64>, BTreeSet<&'static str>>());
+    total += map_nodes * size_class(map_node_bytes::<OrderedFloat<f64>, SmallVec<[MemberId; 4]>>());
     let internal_nodes = map_nodes.saturating_sub(1);
     if internal_nodes > 0 {
         total += internal_nodes * size_class((BTREE_NODE_CAP + 1) * size_of::<*const ()>());
     }
     for bucket in set.by_score.values() {
-        total += btree_nodes(bucket.len()) * size_class(set_node_bytes::<&'static str>());
+        if bucket.spilled() {
+            total += ms(bucket.as_ptr() as *const _);
+        }
     }
 
     let table = set.pool.map.raw_table();
