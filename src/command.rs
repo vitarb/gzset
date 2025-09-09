@@ -125,6 +125,9 @@ fn gzadd(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let score: f64 = args[2].parse_float()?;
+    if !score.is_finite() {
+        return Err(RedisError::Str("ERR score is not a finite number"));
+    }
     let member = args[3].try_as_str()?;
 
     let added = with_set_write(_ctx, key, |s| s.insert(score, member))?;
