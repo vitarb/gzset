@@ -30,7 +30,11 @@ fn map_node_bytes<K, V>() -> usize {
 
 #[inline]
 unsafe fn ms(ptr: *const c_void) -> usize {
-    RedisModule_MallocSize.unwrap()(ptr as *mut _)
+    if let Some(f) = RedisModule_MallocSize {
+        f(ptr as *mut _)
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -72,11 +76,17 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
         let buckets = table.buckets();
         total += size_class(16 + buckets);
     }
+    for key in set.pool.map.keys() {
+        total += ms(key.as_ptr().cast());
+    }
     if set.pool.strings.capacity() > 0 {
         total += ms(set.pool.strings.as_ptr() as *const _);
     }
-    for s in &set.pool.strings {
+    for s in set.pool.strings.iter().flatten() {
         total += ms(s.as_ptr() as *const _);
+    }
+    if set.pool.free_ids.capacity() > 0 {
+        total += ms(set.pool.free_ids.as_ptr() as *const _);
     }
 
     total

@@ -199,6 +199,7 @@ impl ScoreSet {
                     bucket.shrink_to_fit();
                 }
             }
+            self.pool.remove(member);
             true
         } else {
             false
@@ -329,7 +330,9 @@ impl ScoreSet {
                 bucket.shrink_to_fit();
             }
             self.members.remove(id);
-            out.push(self.pool.get(id).to_owned());
+            let name = self.pool.get(id).to_owned();
+            self.pool.remove(&name);
+            out.push(name);
         }
         out
     }
