@@ -312,56 +312,82 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
 
-    let items = with_set_read(ctx, key, |s| s.all_items())?;
-    if items.is_empty() {
-        return if count.is_some() {
-            Ok(RedisValue::Array(Vec::new()))
-        } else {
-            Ok(RedisValue::Null)
-        };
-    }
-    use rand::{seq::SliceRandom, thread_rng};
-    let mut rng = thread_rng();
-    match count {
-        None => {
-            let &(score, ref member) = items.choose(&mut rng).unwrap();
-            if with_scores {
-                Ok(RedisValue::Array(vec![
-                    member.clone().into(),
-                    with_fmt_buf(|b| fmt_f64(b, score).to_owned()).into(),
-                ]))
+    let result = with_set_read(ctx, key, |s| -> rm::RedisResult<RedisValue> {
+        if s.is_empty() {
+            return Ok(if count.is_some() {
+                RedisValue::Array(Vec::new())
             } else {
-                Ok(member.clone().into())
-            }
+                RedisValue::Null
+            });
         }
-        Some(c) => {
-            if c == 0 {
-                return Ok(RedisValue::Array(Vec::new()));
-            }
-            let mut out = Vec::new();
-            if c < 0 {
-                let cnt = (-c) as usize;
-                for _ in 0..cnt {
-                    let &(score, ref member) = items.choose(&mut rng).unwrap();
-                    out.push(member.clone().into());
-                    if with_scores {
-                        with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
-                    }
-                }
-            } else {
-                let cnt = c as usize;
-                let mut idxs: Vec<_> = items.iter().collect();
-                idxs.shuffle(&mut rng);
-                for &(score, ref member) in idxs.into_iter().take(cnt.min(items.len())) {
-                    out.push(member.clone().into());
-                    if with_scores {
-                        with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
-                    }
+        use rand::{seq::index::sample, thread_rng, Rng};
+        let len = s.len();
+        let mut rng = thread_rng();
+        match count {
+            None => {
+                let idx = rng.gen_range(0..len);
+                let mut it = s.iter_range(idx as isize, idx as isize);
+                let (m, sc) = it.next().unwrap();
+                if with_scores {
+                    Ok(RedisValue::Array(vec![
+                        m.to_owned().into(),
+                        with_fmt_buf(|b| fmt_f64(b, sc).to_owned()).into(),
+                    ]))
+                } else {
+                    Ok(m.to_owned().into())
                 }
             }
-            Ok(RedisValue::Array(out))
+            Some(c) => {
+                if c == 0 {
+                    return Ok(RedisValue::Array(Vec::new()));
+                }
+                let mut out = Vec::new();
+                if c < 0 {
+                    let cnt = (-c) as usize;
+                    for _ in 0..cnt {
+                        let idx = rng.gen_range(0..len);
+                        let mut it = s.iter_range(idx as isize, idx as isize);
+                        if let Some((m, sc)) = it.next() {
+                            out.push(m.to_owned().into());
+                            if with_scores {
+                                with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
+                            }
+                        }
+                    }
+                } else {
+                    let cnt = c as usize;
+                    if cnt >= len {
+                        for (m, sc) in s.iter_all() {
+                            out.push(m.to_owned().into());
+                            if with_scores {
+                                with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
+                            }
+                        }
+                    } else {
+                        let mut idxs = sample(&mut rng, len, cnt).into_vec();
+                        idxs.sort_unstable();
+                        let iter = s.iter_all().enumerate();
+                        let mut idx_iter = idxs.into_iter();
+                        let mut next_idx = idx_iter.next();
+                        for (i, (m, sc)) in iter {
+                            if Some(i) == next_idx {
+                                out.push(m.to_owned().into());
+                                if with_scores {
+                                    with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
+                                }
+                                next_idx = idx_iter.next();
+                                if next_idx.is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(RedisValue::Array(out))
+            }
         }
-    }
+    })??;
+    Ok(result)
 }
 
 fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
@@ -399,8 +425,13 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     for k in keys {
         with_set_read(_ctx, k, |set| {
-            for (score, member) in set.all_items() {
-                *agg.entry(member).or_insert(0.0) += score;
+            agg.reserve(set.len());
+            for (member, score) in set.iter_all() {
+                if let Some(v) = agg.get_mut(member) {
+                    *v += score;
+                } else {
+                    agg.insert(member.to_owned(), score);
+                }
             }
         })?;
     }
@@ -429,25 +460,27 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut keys_vec: Vec<_> = keys.clone();
     keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.members.len()).unwrap());
-    let first_members: Vec<(String, f64)> =
-        with_set_read(_ctx, keys_vec[0], |s| s.members_with_scores())?;
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
-    for (m, sc) in &first_members {
-        let mut sum = *sc;
-        let mut present = true;
-        for k in &keys_vec[1..] {
-            match with_set_read(_ctx, k, |set| set.score(m))? {
-                Some(other_sc) => sum += other_sc,
-                None => {
-                    present = false;
-                    break;
+    with_set_read(_ctx, keys_vec[0], |s| -> rm::RedisResult<()> {
+        agg.reserve(s.len());
+        for (m, sc) in s.iter_all() {
+            let mut sum = sc;
+            let mut present = true;
+            for k in &keys_vec[1..] {
+                match with_set_read(_ctx, k, |set| set.score(m))? {
+                    Some(other_sc) => sum += other_sc,
+                    None => {
+                        present = false;
+                        break;
+                    }
                 }
             }
+            if present {
+                agg.insert(m.to_owned(), sum);
+            }
         }
-        if present {
-            agg.insert(m.clone(), sum);
-        }
-    }
+        Ok(())
+    })??;
     let mut items: Vec<_> = agg.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
     let mut out = Vec::new();
@@ -471,21 +504,23 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
-    let first_items: Vec<(String, f64)> =
-        with_set_read(_ctx, keys[0], |s| s.members_with_scores())?;
     let mut diff: FastHashMap<String, f64> = FastHashMap::default();
-    for (m, sc) in first_items {
-        let mut found = false;
-        for &k in &keys[1..] {
-            if with_set_read(_ctx, k, |set| set.contains(&m))? {
-                found = true;
-                break;
+    with_set_read(_ctx, keys[0], |s| -> rm::RedisResult<()> {
+        diff.reserve(s.len());
+        for (m, sc) in s.iter_all() {
+            let mut found = false;
+            for &k in &keys[1..] {
+                if with_set_read(_ctx, k, |set| set.contains(m))? {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                diff.insert(m.to_owned(), sc);
             }
         }
-        if !found {
-            diff.insert(m, sc);
-        }
-    }
+        Ok(())
+    })??;
     let mut items: Vec<_> = diff.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
     let mut out = Vec::new();
@@ -517,19 +552,21 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     } else {
         (key2, key1)
     };
-    let small_members: Vec<String> = with_set_read(_ctx, small_key, |s| s.member_names())?;
-    let mut count = 0i64;
-    for m in small_members {
-        let present = with_set_read(_ctx, big_key, |set| set.contains(&m))?;
-        if present {
-            count += 1;
-            if let Some(l) = limit {
-                if count >= l {
-                    return Ok(count.into());
+    let count = with_set_read(_ctx, small_key, |s| -> rm::RedisResult<i64> {
+        let mut count = 0i64;
+        for (m, _) in s.iter_all() {
+            let present = with_set_read(_ctx, big_key, |set| set.contains(m))?;
+            if present {
+                count += 1;
+                if let Some(l) = limit {
+                    if count >= l {
+                        break;
+                    }
                 }
             }
         }
-    }
+        Ok(count)
+    })??;
     Ok(count.into())
 }
 
@@ -539,26 +576,32 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let cursor: u64 = args[2].parse_integer()? as u64;
-    let items = with_set_read(_ctx, key, |s| s.all_items())?;
-    if items.is_empty() {
-        return Ok(RedisValue::Array(vec![
-            "0".into(),
-            RedisValue::Array(Vec::new()),
-        ]));
-    }
     const BATCH: usize = 10;
-    let start = cursor as usize;
-    let chunk: Vec<_> = items.iter().skip(start).take(BATCH).cloned().collect();
-    let next = if start + chunk.len() >= items.len() {
-        0
-    } else {
-        (start + chunk.len()) as u64
-    };
-    let mut arr = Vec::new();
-    for (score, member) in chunk {
-        arr.push(member.into());
-        with_fmt_buf(|b| arr.push(fmt_f64(b, score).to_owned().into()));
-    }
+    let (arr, next) = with_set_read(_ctx, key, |s| {
+        let len = s.len();
+        if len == 0 {
+            return (Vec::new(), 0u64);
+        }
+        let start = cursor as usize;
+        if start >= len {
+            return (Vec::new(), 0u64);
+        }
+        let end = (start + BATCH).min(len) - 1;
+        let it = s.iter_range(start as isize, end as isize);
+        let mut arr = Vec::new();
+        let mut produced = 0;
+        for (m, sc) in it {
+            arr.push(m.to_owned().into());
+            with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
+            produced += 1;
+        }
+        let next = if start + produced >= len {
+            0
+        } else {
+            (start + produced) as u64
+        };
+        (arr, next)
+    })?;
     Ok(RedisValue::Array(vec![
         next.to_string().into(),
         RedisValue::Array(arr),
