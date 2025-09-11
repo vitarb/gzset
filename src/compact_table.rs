@@ -62,6 +62,7 @@ impl CompactTable {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = (MemberId, f64)> + '_ {
         // SAFETY: all elements in the table are initialized
         unsafe { self.table.iter() }.map(|bucket| {

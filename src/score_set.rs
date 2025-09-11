@@ -322,6 +322,49 @@ impl ScoreSet {
         self.members.len()
     }
 
+    pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
+        let pool = &self.pool;
+        self.by_score
+            .iter()
+            .flat_map(move |(score, bucket)| bucket.iter().map(move |id| (pool.get(*id), score.0)))
+    }
+
+    pub fn iter_from<'a>(
+        &'a self,
+        score: OrderedFloat<f64>,
+        member: &'a str,
+        exclusive: bool,
+    ) -> impl Iterator<Item = (&'a str, f64)> + 'a {
+        use std::cell::Cell;
+        let pool = &self.pool;
+        let first = Cell::new(true);
+        self.by_score.range(score..).flat_map(move |(s, bucket)| {
+            let start_idx = if first.get() {
+                first.set(false);
+                if *s == score {
+                    match bucket.binary_search_by(|&m| pool.get(m).cmp(member)) {
+                        Ok(pos) => {
+                            if exclusive {
+                                pos + 1
+                            } else {
+                                pos
+                            }
+                        }
+                        Err(pos) => pos,
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            bucket[start_idx..]
+                .iter()
+                .map(move |id| (pool.get(*id), s.0))
+        })
+    }
+
+    #[cfg(any(test, feature = "bench"))]
     pub fn all_items(&self) -> Vec<(f64, String)> {
         let mut out = Vec::new();
         for (score, bucket) in &self.by_score {
@@ -332,6 +375,7 @@ impl ScoreSet {
         out
     }
 
+    #[cfg(any(test, feature = "bench"))]
     pub fn member_names(&self) -> Vec<String> {
         self.members
             .iter()
@@ -339,6 +383,7 @@ impl ScoreSet {
             .collect()
     }
 
+    #[cfg(any(test, feature = "bench"))]
     pub fn members_with_scores(&self) -> Vec<(String, f64)> {
         self.members
             .iter()
