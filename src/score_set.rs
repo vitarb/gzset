@@ -1,6 +1,6 @@
 use ordered_float::OrderedFloat;
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem::size_of};
 
 use crate::{
     compact_table::CompactTable,
@@ -9,11 +9,21 @@ use crate::{
 
 type Bucket = SmallVec<[MemberId; 4]>;
 
+#[inline]
+const fn size_class(bytes: usize) -> usize {
+    if bytes <= 512 {
+        (bytes + 7) & !7
+    } else {
+        bytes.next_power_of_two()
+    }
+}
+
 #[derive(Default)]
 pub struct ScoreSet {
     pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
     pub(crate) members: CompactTable,
     pub(crate) pool: StringPool,
+    mem_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -146,8 +156,26 @@ impl<'a> ExactSizeIterator for ScoreIter<'a> {
 }
 
 impl ScoreSet {
+    #[inline]
+    pub fn mem_bytes(&self) -> usize {
+        self.mem_bytes
+    }
+
+    #[inline]
+    fn member_table_bytes(table: &CompactTable) -> usize {
+        let raw = table.raw_table();
+        if raw.capacity() == 0 {
+            0
+        } else {
+            let (_, layout) = raw.allocation_info();
+            layout.size() + size_class(16 + raw.buckets())
+        }
+    }
+
     pub fn insert(&mut self, score: f64, member: &str) -> bool {
         let key = OrderedFloat(score);
+        let is_new = self.pool.lookup(member).is_none();
+        let prev_table = Self::member_table_bytes(&self.members);
         let id = self.pool.intern(member);
         let name = self.pool.get(id);
         let old = self.members.get(id);
@@ -164,16 +192,27 @@ impl ScoreSet {
                     if bucket.is_empty() {
                         self.by_score.remove(&old_key);
                     } else if bucket.spilled() && bucket.len() <= 4 {
+                        let cap = bucket.capacity();
                         bucket.shrink_to_fit();
+                        self.mem_bytes -= cap * size_of::<MemberId>();
                     }
                 }
             }
         }
+        let new_table = Self::member_table_bytes(&self.members);
+        self.mem_bytes += new_table - prev_table;
+        if is_new {
+            self.mem_bytes += member.len() * 2;
+        }
         let bucket = self.by_score.entry(key).or_default();
+        let spilled_before = bucket.spilled();
         match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
             Ok(_) => false,
             Err(pos) => {
                 bucket.insert(pos, id);
+                if !spilled_before && bucket.spilled() {
+                    self.mem_bytes += bucket.capacity() * size_of::<MemberId>();
+                }
                 true
             }
         }
@@ -188,6 +227,7 @@ impl ScoreSet {
             Some(s) => OrderedFloat(s),
             None => return false,
         };
+        let prev_table = Self::member_table_bytes(&self.members);
         if self.members.remove(id) {
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
@@ -196,10 +236,20 @@ impl ScoreSet {
                 if bucket.is_empty() {
                     self.by_score.remove(&score);
                 } else if bucket.spilled() && bucket.len() <= 4 {
+                    let cap = bucket.capacity();
                     bucket.shrink_to_fit();
+                    self.mem_bytes -= cap * size_of::<MemberId>();
                 }
             }
-            self.pool.remove(member);
+            let new_table = Self::member_table_bytes(&self.members);
+            if new_table >= prev_table {
+                self.mem_bytes += new_table - prev_table;
+            } else {
+                self.mem_bytes -= prev_table - new_table;
+            }
+            if self.pool.remove(member).is_some() {
+                self.mem_bytes -= member.len() * 2;
+            }
             true
         } else {
             false
@@ -327,11 +377,22 @@ impl ScoreSet {
             if bucket.is_empty() {
                 entry.remove_entry();
             } else if bucket.spilled() && bucket.len() <= 4 {
+                let cap = bucket.capacity();
                 bucket.shrink_to_fit();
+                self.mem_bytes -= cap * size_of::<MemberId>();
             }
+            let prev_table = Self::member_table_bytes(&self.members);
             self.members.remove(id);
+            let new_table = Self::member_table_bytes(&self.members);
+            if new_table >= prev_table {
+                self.mem_bytes += new_table - prev_table;
+            } else {
+                self.mem_bytes -= prev_table - new_table;
+            }
             let name = self.pool.get(id).to_owned();
-            self.pool.remove(&name);
+            if self.pool.remove(&name).is_some() {
+                self.mem_bytes -= name.len() * 2;
+            }
             out.push(name);
         }
         out
