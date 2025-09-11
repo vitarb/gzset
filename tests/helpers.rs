@@ -1,22 +1,25 @@
 use std::process::{Child, Command};
+use std::sync::Once;
 use std::{fs, path::Path};
 use std::{thread, time::Duration};
+
+static BUILD: Once = Once::new();
 
 pub fn latest_so_path() -> std::path::PathBuf {
     use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let debug = root.join(format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
-    let release = root.join(format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
-
-    if !debug.exists() {
+    BUILD.call_once(|| {
         assert!(Command::new("cargo")
             .current_dir(root)
             .arg("build")
             .status()
             .expect("failed to run cargo build")
             .success());
-    }
+    });
+
+    let debug = root.join(format!("target/debug/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
+    let release = root.join(format!("target/release/{DLL_PREFIX}gzset{DLL_SUFFIX}"));
 
     let meta_dbg = fs::metadata(&debug).unwrap();
     let meta_rel = fs::metadata(&release).ok();

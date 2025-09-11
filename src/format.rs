@@ -3,6 +3,7 @@ use std::cell::RefCell;
 
 #[inline]
 pub fn fmt_f64(buf: &mut Buffer, score: f64) -> &str {
+    debug_assert!(score.is_finite());
     let formatted = buf.format_finite(score);
     formatted.strip_suffix(".0").unwrap_or(formatted)
 }
