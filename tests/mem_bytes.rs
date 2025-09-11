@@ -10,10 +10,10 @@ fn mem_bytes_tracking() {
     let mut set = ScoreSet::default();
     let mut prev = set.mem_bytes();
     for i in 0..1000 {
-        let m = format!("m{:0200}", i);
+        let m = format!("m{i:0200}");
         assert!(set.insert(i as f64, &m));
         let now = set.mem_bytes();
-        assert!(now >= prev, "mem_bytes should not decrease on insert");
+        assert!(now > prev, "mem_bytes should increase on insert");
         prev = now;
     }
     unsafe {
@@ -25,10 +25,10 @@ fn mem_bytes_tracking() {
         );
     }
     for i in 0..1000 {
-        let m = format!("m{:0200}", i);
+        let m = format!("m{i:0200}");
         assert!(set.remove(&m));
         let now = set.mem_bytes();
-        assert!(now <= prev, "mem_bytes should not increase on remove");
+        assert!(now < prev, "mem_bytes should decrease on remove");
         prev = now;
     }
 }
