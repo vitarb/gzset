@@ -1,8 +1,18 @@
+#[cfg(not(feature = "fast-hash"))]
+use ahash::AHashMap;
+#[cfg(feature = "fast-hash")]
 use hashbrown::HashMap;
+#[cfg(feature = "fast-hash")]
 use rustc_hash::FxHasher;
+#[cfg(feature = "fast-hash")]
 use std::hash::BuildHasherDefault;
 
+#[cfg(feature = "fast-hash")]
+/// FxHasher-based map used only when the `fast-hash` feature is enabled.
 pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+#[cfg(not(feature = "fast-hash"))]
+/// Default to `AHashMap` for DOS-resistant hashing of user-provided names.
+pub type FastHashMap<K, V> = AHashMap<K, V>;
 pub type MemberId = u32;
 
 #[derive(Default, Debug)]

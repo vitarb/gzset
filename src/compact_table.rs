@@ -6,6 +6,7 @@
 // according to those terms.
 
 use hashbrown::raw::RawTable;
+// MemberId is an internal u32 index; using FxHasher here is safe and fast.
 use rustc_hash::FxHasher;
 use std::hash::{BuildHasher, BuildHasherDefault};
 
@@ -28,6 +29,7 @@ impl CompactTable {
 
     #[inline]
     fn hash(id: MemberId) -> u64 {
+        // MemberId is not attacker-controlled; FxHasher is acceptable.
         BuildFxHasher::default().hash_one(id)
     }
 
