@@ -639,7 +639,9 @@ mod tests {
         }
         unsafe {
             let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total();
+            let breakdown = set.debug_mem_breakdown().total()
+                + ScoreSet::btree_nodes(set.by_score_sizes.len())
+                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
@@ -649,7 +651,9 @@ mod tests {
         assert!(set.remove("m0"));
         unsafe {
             let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total();
+            let breakdown = set.debug_mem_breakdown().total()
+                + ScoreSet::btree_nodes(set.by_score_sizes.len())
+                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
@@ -658,7 +662,9 @@ mod tests {
         }
         unsafe {
             let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total();
+            let breakdown = set.debug_mem_breakdown().total()
+                + ScoreSet::btree_nodes(set.by_score_sizes.len())
+                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }

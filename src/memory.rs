@@ -4,6 +4,7 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 
 const BTREE_NODE_CAP: usize = 11;
+const BTREE_NODE_HDR: usize = 48; // matches score_set.rs approximation
 
 #[inline]
 const fn size_class(bytes: usize) -> usize {
@@ -38,13 +39,16 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
 unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
     let mut total = ms(set as *const _ as *const _);
 
+    // tracked by ScoreSet::mem_bytes (buckets, member table, strings, by_score BTreeMap)
     total += set.mem_bytes();
 
-    // The layout of internal BTreeMap nodes is not public, so we approximate their
-    // overhead assuming each internal node stores `BTREE_NODE_CAP + 1` child pointers.
-    let internal_nodes = btree_nodes(set.by_score.len()).saturating_sub(1);
-    if internal_nodes > 0 {
-        total += internal_nodes * size_class((BTREE_NODE_CAP + 1) * size_of::<*const ()>());
+    // Add the auxiliary by_score_sizes BTreeMap overhead (keys + values).
+    // We mirror the approximation used in score_set.rs.
+    let sizes_nodes = btree_nodes(set.by_score_sizes.len());
+    if sizes_nodes > 0 {
+        let node_bytes = BTREE_NODE_HDR
+            + BTREE_NODE_CAP * (size_of::<ordered_float::OrderedFloat<f64>>() + size_of::<usize>());
+        total += sizes_nodes * size_class(node_bytes);
     }
 
     #[cfg(feature = "fast-hash")]
