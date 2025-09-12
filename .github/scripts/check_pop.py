@@ -1,17 +1,25 @@
-import json, sys
-from pathlib import Path
+import json, sys, glob
 
-base = Path('target/criterion/pop_loop_vs_baseline/base/estimates.json')
-new = Path('target/criterion/pop_loop_vs_baseline/new/estimates.json')
-with base.open() as f:
-    b = json.load(f)
-with new.open() as f:
-    n = json.load(f)
-base_mean = b['mean']['point_estimate']
-new_mean = n['mean']['point_estimate']
-if base_mean == 0:
-    raise SystemExit('invalid baseline')
-impr = (base_mean - new_mean) / base_mean
-print(f"Improvement: {impr*100:.1f}%")
+GROUP = "pop_loop_vs_baseline"
+
+def read_mean(path):
+    with open(path) as f:
+        return json.load(f)["mean"]["point_estimate"]
+
+def sum_means(baseline):
+    # Works whether Criterion organizes as group/function/baseline or group/baseline
+    paths = glob.glob(f"target/criterion/{GROUP}/**/{baseline}/estimates.json", recursive=True)
+    if not paths:
+        sys.exit(f"[bench] no estimates for baseline '{baseline}'. Did you run with --save-baseline {baseline}?")
+    return sum(read_mean(p) for p in paths)
+
+base = sum_means("base")
+new = sum_means("new")
+if base <= 0:
+    sys.exit("invalid baseline (base <= 0)")
+
+impr = (base - new) / base
+print(f"Improvement: {impr*100:.1f}% (base={base:.3g}, new={new:.3g})")
 if impr < 0.10:
-    raise SystemExit('pop loop speedup <10%')
+    raise SystemExit("pop loop speedup <10%")
+

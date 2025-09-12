@@ -2,6 +2,7 @@ name: Bench
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [ master, main ]
 
@@ -10,10 +11,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           profile: minimal
           override: true
-      - name: Bench
-        run: cargo bench --all --features bench
+
+      # Build once to warm cache
+      - name: Build (warm-up)
+        run: cargo build --all --features bench
+
+      # For PRs: compare against the PR base; for pushes: compare against HEAD^
+      - name: Save baseline (base) — PR
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.sha }}"
+          git checkout "$BASE_SHA"
+          cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline base
+          git checkout "$HEAD_SHA"
+
+      - name: Save baseline (base) — push
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          BASE_SHA="$(git rev-parse HEAD^)"
+          HEAD_SHA="${{ github.sha }}"
+          git checkout "$BASE_SHA"
+          cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline base
+          git checkout "$HEAD_SHA"
+
+      - name: Run current benches (new)
+        run: cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline new
+
+      - name: Enforce pop-loop speedup
+        run: python3 .github/scripts/check_pop.py
+
