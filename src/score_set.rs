@@ -9,6 +9,9 @@ use crate::{
 
 type Bucket = SmallVec<[MemberId; 4]>;
 
+const BTREE_NODE_CAP: usize = 11;
+const BTREE_NODE_HDR: usize = 48;
+
 #[inline]
 const fn size_class(bytes: usize) -> usize {
     if bytes <= 512 {
@@ -24,6 +27,25 @@ pub struct ScoreSet {
     pub(crate) members: CompactTable,
     pub(crate) pool: StringPool,
     mem_bytes: usize,
+    #[cfg(test)]
+    mem_breakdown: MemBreakdown,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MemBreakdown {
+    pub score_map: usize,
+    pub buckets: usize,
+    pub member_table: usize,
+    pub strings: usize,
+}
+
+#[cfg(test)]
+impl MemBreakdown {
+    #[inline]
+    pub fn total(&self) -> usize {
+        self.score_map + self.buckets + self.member_table + self.strings
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +183,12 @@ impl ScoreSet {
         self.mem_bytes
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub fn debug_mem_breakdown(&self) -> MemBreakdown {
+        self.mem_breakdown
+    }
+
     #[inline]
     fn member_table_bytes(table: &CompactTable) -> usize {
         let raw = table.raw_table();
@@ -172,10 +200,31 @@ impl ScoreSet {
         }
     }
 
+    #[inline]
+    fn score_map_bytes(map: &BTreeMap<OrderedFloat<f64>, Bucket>) -> usize {
+        if map.is_empty() {
+            0
+        } else {
+            Self::btree_nodes(map.len())
+                * size_class(Self::map_node_bytes::<OrderedFloat<f64>, Bucket>())
+        }
+    }
+
+    #[inline]
+    fn btree_nodes(elem: usize) -> usize {
+        elem.div_ceil(BTREE_NODE_CAP)
+    }
+
+    #[inline]
+    fn map_node_bytes<K, V>() -> usize {
+        BTREE_NODE_HDR + BTREE_NODE_CAP * (size_of::<K>() + size_of::<V>())
+    }
+
     pub fn insert(&mut self, score: f64, member: &str) -> bool {
         let key = OrderedFloat(score);
         let is_new = self.pool.lookup(member).is_none();
         let prev_table = Self::member_table_bytes(&self.members);
+        let prev_map = Self::score_map_bytes(&self.by_score);
         let id = self.pool.intern(member);
         let name = self.pool.get(id);
         let old = self.members.get(id);
@@ -194,15 +243,29 @@ impl ScoreSet {
                     } else if bucket.spilled() && bucket.len() <= 4 {
                         let cap = bucket.capacity();
                         bucket.shrink_to_fit();
-                        self.mem_bytes -= cap * size_of::<MemberId>();
+                        let bytes = cap * size_of::<MemberId>();
+                        self.mem_bytes -= bytes;
+                        #[cfg(test)]
+                        {
+                            self.mem_breakdown.buckets -= bytes;
+                        }
                     }
                 }
             }
         }
         let new_table = Self::member_table_bytes(&self.members);
         self.mem_bytes += new_table - prev_table;
+        #[cfg(test)]
+        {
+            self.mem_breakdown.member_table += new_table - prev_table;
+        }
         if is_new {
-            self.mem_bytes += member.len() * 2;
+            let bytes = member.len() * 2;
+            self.mem_bytes += bytes;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.strings += bytes;
+            }
         }
         let bucket = self.by_score.entry(key).or_default();
         let spilled_before = bucket.spilled();
@@ -211,7 +274,28 @@ impl ScoreSet {
             Err(pos) => {
                 bucket.insert(pos, id);
                 if !spilled_before && bucket.spilled() {
-                    self.mem_bytes += bucket.capacity() * size_of::<MemberId>();
+                    let bytes = bucket.capacity() * size_of::<MemberId>();
+                    self.mem_bytes += bytes;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.buckets += bytes;
+                    }
+                }
+                let new_map = Self::score_map_bytes(&self.by_score);
+                if new_map >= prev_map {
+                    let delta = new_map - prev_map;
+                    self.mem_bytes += delta;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.score_map += delta;
+                    }
+                } else {
+                    let delta = prev_map - new_map;
+                    self.mem_bytes -= delta;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.score_map -= delta;
+                    }
                 }
                 true
             }
@@ -228,6 +312,7 @@ impl ScoreSet {
             None => return false,
         };
         let prev_table = Self::member_table_bytes(&self.members);
+        let prev_map = Self::score_map_bytes(&self.by_score);
         if self.members.remove(id) {
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
@@ -238,17 +323,53 @@ impl ScoreSet {
                 } else if bucket.spilled() && bucket.len() <= 4 {
                     let cap = bucket.capacity();
                     bucket.shrink_to_fit();
-                    self.mem_bytes -= cap * size_of::<MemberId>();
+                    let bytes = cap * size_of::<MemberId>();
+                    self.mem_bytes -= bytes;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.buckets -= bytes;
+                    }
                 }
             }
             let new_table = Self::member_table_bytes(&self.members);
             if new_table >= prev_table {
-                self.mem_bytes += new_table - prev_table;
+                let delta = new_table - prev_table;
+                self.mem_bytes += delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.member_table += delta;
+                }
             } else {
-                self.mem_bytes -= prev_table - new_table;
+                let delta = prev_table - new_table;
+                self.mem_bytes -= delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.member_table -= delta;
+                }
+            }
+            let new_map = Self::score_map_bytes(&self.by_score);
+            if new_map >= prev_map {
+                let delta = new_map - prev_map;
+                self.mem_bytes += delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.score_map += delta;
+                }
+            } else {
+                let delta = prev_map - new_map;
+                self.mem_bytes -= delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.score_map -= delta;
+                }
             }
             if self.pool.remove(member).is_some() {
-                self.mem_bytes -= member.len() * 2;
+                let bytes = member.len() * 2;
+                self.mem_bytes -= bytes;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.strings -= bytes;
+                }
             }
             true
         } else {
@@ -417,6 +538,7 @@ impl ScoreSet {
 
     #[cfg(any(test, feature = "bench"))]
     pub fn pop_all(&mut self, min: bool) -> Vec<String> {
+        let prev_map = Self::score_map_bytes(&self.by_score);
         let mut out = Vec::new();
         while !self.by_score.is_empty() {
             let mut entry = if min {
@@ -435,22 +557,94 @@ impl ScoreSet {
             } else if bucket.spilled() && bucket.len() <= 4 {
                 let cap = bucket.capacity();
                 bucket.shrink_to_fit();
-                self.mem_bytes -= cap * size_of::<MemberId>();
+                let bytes = cap * size_of::<MemberId>();
+                self.mem_bytes -= bytes;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.buckets -= bytes;
+                }
             }
             let prev_table = Self::member_table_bytes(&self.members);
             self.members.remove(id);
             let new_table = Self::member_table_bytes(&self.members);
             if new_table >= prev_table {
-                self.mem_bytes += new_table - prev_table;
+                let delta = new_table - prev_table;
+                self.mem_bytes += delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.member_table += delta;
+                }
             } else {
-                self.mem_bytes -= prev_table - new_table;
+                let delta = prev_table - new_table;
+                self.mem_bytes -= delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.member_table -= delta;
+                }
             }
             let name = self.pool.get(id).to_owned();
             if self.pool.remove(&name).is_some() {
-                self.mem_bytes -= name.len() * 2;
+                let bytes = name.len() * 2;
+                self.mem_bytes -= bytes;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.strings -= bytes;
+                }
             }
             out.push(name);
         }
+        let new_map = Self::score_map_bytes(&self.by_score);
+        if prev_map > new_map {
+            let delta = prev_map - new_map;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map -= delta;
+            }
+        }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::gzset_mem_usage;
+    use std::os::raw::c_void;
+
+    #[test]
+    fn mem_usage_matches_breakdown() {
+        let mut set = ScoreSet::default();
+        for i in 0..5 {
+            assert!(set.insert(0.0, &format!("m{i}")));
+        }
+        for i in 5..105 {
+            assert!(set.insert(i as f64, &format!("m{i}")));
+        }
+        unsafe {
+            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
+            let breakdown = set.debug_mem_breakdown().total();
+            let diff = usage as isize - breakdown as isize;
+            assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
+        }
+        for i in 5..105 {
+            assert!(set.remove(&format!("m{i}")));
+        }
+        assert!(set.remove("m0"));
+        unsafe {
+            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
+            let breakdown = set.debug_mem_breakdown().total();
+            let diff = usage as isize - breakdown as isize;
+            assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
+        }
+        for i in 1..5 {
+            assert!(set.remove(&format!("m{i}")));
+        }
+        unsafe {
+            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
+            let breakdown = set.debug_mem_breakdown().total();
+            let diff = usage as isize - breakdown as isize;
+            assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
+        }
     }
 }

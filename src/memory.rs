@@ -1,13 +1,9 @@
-use crate::{pool::MemberId, score_set::ScoreSet};
-use ordered_float::OrderedFloat;
+use crate::score_set::ScoreSet;
 use redis_module::raw::RedisModule_MallocSize;
-use smallvec::SmallVec;
 use std::mem::size_of;
 use std::os::raw::c_void;
 
 const BTREE_NODE_CAP: usize = 11;
-const BTREE_NODE_HDR: usize = 48;
-const EXTRA_PER_ELEM: usize = 24;
 
 #[inline]
 const fn size_class(bytes: usize) -> usize {
@@ -21,11 +17,6 @@ const fn size_class(bytes: usize) -> usize {
 #[inline]
 fn btree_nodes(elem: usize) -> usize {
     elem.div_ceil(BTREE_NODE_CAP)
-}
-
-#[inline]
-fn map_node_bytes<K, V>() -> usize {
-    BTREE_NODE_HDR + BTREE_NODE_CAP * (size_of::<K>() + size_of::<V>())
 }
 
 #[inline]
@@ -48,11 +39,10 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
     let mut total = ms(set as *const _ as *const _);
 
     total += set.mem_bytes();
-    total += EXTRA_PER_ELEM * set.members.len();
 
-    let map_nodes = btree_nodes(set.by_score.len());
-    total += map_nodes * size_class(map_node_bytes::<OrderedFloat<f64>, SmallVec<[MemberId; 4]>>());
-    let internal_nodes = map_nodes.saturating_sub(1);
+    // The layout of internal BTreeMap nodes is not public, so we approximate their
+    // overhead assuming each internal node stores `BTREE_NODE_CAP + 1` child pointers.
+    let internal_nodes = btree_nodes(set.by_score.len()).saturating_sub(1);
     if internal_nodes > 0 {
         total += internal_nodes * size_class((BTREE_NODE_CAP + 1) * size_of::<*const ()>());
     }
