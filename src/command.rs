@@ -1,5 +1,6 @@
 use crate::format::{fmt_f64, with_fmt_buf};
 use crate::{score_set::ScoreSet, FastHashMap};
+use ordered_float::OrderedFloat;
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_void};
@@ -575,37 +576,72 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
-    let cursor: u64 = args[2].parse_integer()? as u64;
+    let cursor = args[2].try_as_str()?;
     const BATCH: usize = 10;
-    let (arr, next) = with_set_read(_ctx, key, |s| {
-        let len = s.len();
-        if len == 0 {
-            return (Vec::new(), 0u64);
-        }
-        let start = cursor as usize;
-        if start >= len {
-            return (Vec::new(), 0u64);
-        }
-        let end = (start + BATCH).min(len) - 1;
-        let it = s.iter_range(start as isize, end as isize);
-        let mut arr = Vec::new();
-        let mut produced = 0;
-        for (m, sc) in it {
-            arr.push(m.to_owned().into());
-            with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
-            produced += 1;
-        }
-        let next = if start + produced >= len {
-            0
+
+    fn encode_cursor(score: f64, member: &str) -> String {
+        with_fmt_buf(|b| {
+            let score_s = fmt_f64(b, score);
+            let mut out = String::with_capacity(score_s.len() + 1 + member.len());
+            out.push_str(score_s);
+            out.push('|');
+            for ch in member.as_bytes() {
+                if *ch == b'|' {
+                    out.push_str("%7C");
+                } else {
+                    out.push(*ch as char);
+                }
+            }
+            out
+        })
+    }
+
+    fn decode_cursor(cur: &str) -> Option<(f64, String)> {
+        let (score_s, member_s) = cur.split_once('|')?;
+        let score = score_s.parse().ok()?;
+        let member = if member_s.contains("%7C") {
+            member_s.replace("%7C", "|")
         } else {
-            (start + produced) as u64
+            member_s.to_string()
         };
-        (arr, next)
-    })?;
-    Ok(RedisValue::Array(vec![
-        next.to_string().into(),
-        RedisValue::Array(arr),
-    ]))
+        Some((score, member))
+    }
+
+    let parsed = if cursor == "0" {
+        None
+    } else {
+        Some(decode_cursor(cursor).ok_or(RedisError::Str("ERR invalid cursor"))?)
+    };
+
+    let (arr, next) = with_set_read(_ctx, key, move |s| -> rm::RedisResult<(Vec<RedisValue>, String)> {
+        if s.is_empty() {
+            return Ok((Vec::new(), "0".to_string()));
+        }
+
+        let mut iter = match parsed {
+            None => s.iter_from(OrderedFloat(f64::NEG_INFINITY), "", true).peekable(),
+            Some((score, ref member)) => s.iter_from(OrderedFloat(score), member, true).peekable(),
+        };
+
+        let mut arr = Vec::new();
+        let mut last = None;
+        for _ in 0..BATCH {
+            if let Some((m, sc)) = iter.next() {
+                arr.push(m.to_owned().into());
+                with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
+                last = Some((sc, m.to_owned()));
+            } else {
+                break;
+            }
+        }
+        let next = match last {
+            Some((sc, m)) if iter.peek().is_some() => encode_cursor(sc, &m),
+            _ => "0".to_string(),
+        };
+        Ok((arr, next))
+    })??;
+
+    Ok(RedisValue::Array(vec![next.into(), RedisValue::Array(arr)]))
 }
 
 /// Register all module commands with the server.

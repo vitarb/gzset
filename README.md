@@ -98,6 +98,10 @@ The GitHub Actions workflow replicates the above on *ubuntu‑latest*.
 | `GZRANDMEMBER key [count] [WITHSCORES]` | Random sampling                               |
 | `GZSCAN key cursor`                     | Stateless incremental scan                    |
 
+`GZSCAN` uses a score/member-based cursor. The initial cursor is `0`; subsequent
+calls pass back the previous `<score>|<member>` pair. A `|` in member names is
+escaped as `%7C`.
+
 Differences from core Redis:
 
 * `GZRANGE` currently **omits scores**. A `WITHSCORES` flag will land soon.
