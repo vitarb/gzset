@@ -1,4 +1,5 @@
 use gzset::ScoreSet;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[test]
 fn lexicographic_order_equal_scores() {
@@ -75,4 +76,29 @@ fn grow_and_shrink_bucket() {
     set.remove("a");
     set.remove("b");
     assert_eq!(set.bucket_capacity_for_test(1.0), Some(4));
+}
+
+#[test]
+fn rank_matches_naive_random() {
+    let mut rng = StdRng::seed_from_u64(0);
+    for _ in 0..10 {
+        let mut set = ScoreSet::default();
+        let mut members = Vec::new();
+        for i in 0..100 {
+            let member = format!("m{i}");
+            let score: f64 = rng.gen();
+            set.insert(score, &member);
+            members.push(member);
+        }
+        let items = set.range_iter(0, -1);
+        let mut naive = std::collections::HashMap::new();
+        for (i, (_, m)) in items.iter().enumerate() {
+            naive.insert(m.clone(), i);
+        }
+        for m in members {
+            let r_new = set.rank(&m).expect("rank");
+            let r_old = naive[&m];
+            assert_eq!(r_new, r_old, "member {m}");
+        }
+    }
 }

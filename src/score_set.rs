@@ -21,6 +21,7 @@ const fn size_class(bytes: usize) -> usize {
 #[derive(Default)]
 pub struct ScoreSet {
     pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
+    pub(crate) by_score_sizes: BTreeMap<OrderedFloat<f64>, usize>,
     pub(crate) members: CompactTable,
     pub(crate) pool: StringPool,
     mem_bytes: usize,
@@ -189,6 +190,12 @@ impl ScoreSet {
                     if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
                         bucket.remove(pos);
                     }
+                    if let Some(sz) = self.by_score_sizes.get_mut(&old_key) {
+                        *sz -= 1;
+                        if *sz == 0 {
+                            self.by_score_sizes.remove(&old_key);
+                        }
+                    }
                     if bucket.is_empty() {
                         self.by_score.remove(&old_key);
                     } else if bucket.spilled() && bucket.len() <= 4 {
@@ -210,6 +217,7 @@ impl ScoreSet {
             Ok(_) => false,
             Err(pos) => {
                 bucket.insert(pos, id);
+                *self.by_score_sizes.entry(key).or_insert(0) += 1;
                 if !spilled_before && bucket.spilled() {
                     self.mem_bytes += bucket.capacity() * size_of::<MemberId>();
                 }
@@ -232,6 +240,12 @@ impl ScoreSet {
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
                     bucket.remove(pos);
+                }
+                if let Some(sz) = self.by_score_sizes.get_mut(&score) {
+                    *sz -= 1;
+                    if *sz == 0 {
+                        self.by_score_sizes.remove(&score);
+                    }
                 }
                 if bucket.is_empty() {
                     self.by_score.remove(&score);
@@ -263,21 +277,16 @@ impl ScoreSet {
 
     pub fn rank(&self, member: &str) -> Option<usize> {
         let id = self.pool.lookup(member)?;
-        let target = OrderedFloat(self.members.get(id)?);
+        let score_key = OrderedFloat(self.members.get(id)?);
+        let bucket = self.by_score.get(&score_key)?;
+        let pos = bucket
+            .binary_search_by(|&m| self.pool.get(m).cmp(member))
+            .ok()?;
         let mut idx = 0usize;
-        for (score, bucket) in &self.by_score {
-            if *score == target {
-                for m in bucket {
-                    if *m == id {
-                        return Some(idx);
-                    }
-                    idx += 1;
-                }
-            } else {
-                idx += bucket.len();
-            }
+        for (_, sz) in self.by_score_sizes.range(..score_key) {
+            idx += *sz;
         }
-        None
+        Some(idx + pos)
     }
 
     pub fn select_by_rank(&self, mut r: usize) -> (&str, f64) {
@@ -424,12 +433,19 @@ impl ScoreSet {
             } else {
                 self.by_score.last_entry().unwrap()
             };
+            let score_key = *entry.key();
             let bucket = entry.get_mut();
             let id = if min {
                 bucket.remove(0)
             } else {
                 bucket.pop().unwrap()
             };
+            if let Some(sz) = self.by_score_sizes.get_mut(&score_key) {
+                *sz -= 1;
+                if *sz == 0 {
+                    self.by_score_sizes.remove(&score_key);
+                }
+            }
             if bucket.is_empty() {
                 entry.remove_entry();
             } else if bucket.spilled() && bucket.len() <= 4 {
