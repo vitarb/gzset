@@ -613,33 +613,41 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
         Some(decode_cursor(cursor).ok_or(RedisError::Str("ERR invalid cursor"))?)
     };
 
-    let (arr, next) = with_set_read(_ctx, key, move |s| -> rm::RedisResult<(Vec<RedisValue>, String)> {
-        if s.is_empty() {
-            return Ok((Vec::new(), "0".to_string()));
-        }
-
-        let mut iter = match parsed {
-            None => s.iter_from(OrderedFloat(f64::NEG_INFINITY), "", true).peekable(),
-            Some((score, ref member)) => s.iter_from(OrderedFloat(score), member, true).peekable(),
-        };
-
-        let mut arr = Vec::new();
-        let mut last = None;
-        for _ in 0..BATCH {
-            if let Some((m, sc)) = iter.next() {
-                arr.push(m.to_owned().into());
-                with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
-                last = Some((sc, m.to_owned()));
-            } else {
-                break;
+    let (arr, next) = with_set_read(
+        _ctx,
+        key,
+        move |s| -> rm::RedisResult<(Vec<RedisValue>, String)> {
+            if s.is_empty() {
+                return Ok((Vec::new(), "0".to_string()));
             }
-        }
-        let next = match last {
-            Some((sc, m)) if iter.peek().is_some() => encode_cursor(sc, &m),
-            _ => "0".to_string(),
-        };
-        Ok((arr, next))
-    })??;
+
+            let mut iter = match parsed {
+                None => s
+                    .iter_from(OrderedFloat(f64::NEG_INFINITY), "", true)
+                    .peekable(),
+                Some((score, ref member)) => {
+                    s.iter_from(OrderedFloat(score), member, true).peekable()
+                }
+            };
+
+            let mut arr = Vec::new();
+            let mut last = None;
+            for _ in 0..BATCH {
+                if let Some((m, sc)) = iter.next() {
+                    arr.push(m.to_owned().into());
+                    with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
+                    last = Some((sc, m.to_owned()));
+                } else {
+                    break;
+                }
+            }
+            let next = match last {
+                Some((sc, m)) if iter.peek().is_some() => encode_cursor(sc, &m),
+                _ => "0".to_string(),
+            };
+            Ok((arr, next))
+        },
+    )??;
 
     Ok(RedisValue::Array(vec![next.into(), RedisValue::Array(arr)]))
 }
