@@ -45,6 +45,7 @@ Each `GZSET` key owns its B-tree data directly, so `MEMORY USAGE` reflects the e
 cargo build -p gzset
 
 # 2. Launch a throw‑away Valkey instance with the module pre‑loaded
+# (builds the module with the `redis-module` feature so memory stats are accurate)
 cargo valkey -- --loglevel warning
 #                       └─────────────── extra args passed straight to valkey-server
 
