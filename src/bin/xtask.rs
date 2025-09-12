@@ -102,6 +102,8 @@ fn start_valkey(
     if matches!(profile, Profile::Release) {
         build.arg("--release");
     }
+    // Use Valkey's allocator by default so MEMORY USAGE & maxmemory behave correctly.
+    build.arg("--features").arg("redis-module");
     anyhow::ensure!(build.status()?.success(), "cargo build failed");
 
     // 2) Resolve full path to the .so/.dylib/.dll ----------------------------
