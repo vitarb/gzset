@@ -38,6 +38,7 @@ fn memory_profile() -> redis::RedisResult<()> {
         // ---- GZSET ---------------------------------------------------------
         redis::cmd("FLUSHALL").query::<()>(&mut con)?;
         redis::cmd("MEMORY").arg("PURGE").query::<()>(&mut con)?;
+        std::thread::sleep(Duration::from_millis(50)); // allow purge to settle
         let base = used_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
@@ -55,6 +56,7 @@ fn memory_profile() -> redis::RedisResult<()> {
         // ---- ZSET ----------------------------------------------------------
         redis::cmd("DEL").arg("gz").query::<()>(&mut con)?;
         redis::cmd("MEMORY").arg("PURGE").query::<()>(&mut con)?;
+        std::thread::sleep(Duration::from_millis(50)); // allow purge to settle
         let base2 = used_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
