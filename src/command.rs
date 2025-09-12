@@ -322,13 +322,13 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
             });
         }
         use rand::{seq::index::sample, thread_rng, Rng};
+        use rustc_hash::FxHashSet;
         let len = s.len();
         let mut rng = thread_rng();
         match count {
             None => {
                 let idx = rng.gen_range(0..len);
-                let mut it = s.iter_range(idx as isize, idx as isize);
-                let (m, sc) = it.next().unwrap();
+                let (m, sc) = s.select_by_rank(idx);
                 if with_scores {
                     Ok(RedisValue::Array(vec![
                         m.to_owned().into(),
@@ -347,12 +347,10 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
                     let cnt = (-c) as usize;
                     for _ in 0..cnt {
                         let idx = rng.gen_range(0..len);
-                        let mut it = s.iter_range(idx as isize, idx as isize);
-                        if let Some((m, sc)) = it.next() {
-                            out.push(m.to_owned().into());
-                            if with_scores {
-                                with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
-                            }
+                        let (m, sc) = s.select_by_rank(idx);
+                        out.push(m.to_owned().into());
+                        if with_scores {
+                            with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
                         }
                     }
                 } else {
@@ -362,6 +360,18 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
                             out.push(m.to_owned().into());
                             if with_scores {
                                 with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
+                            }
+                        }
+                    } else if cnt <= 64 || cnt * 3 <= len {
+                        let mut seen: FxHashSet<usize> = FxHashSet::default();
+                        while out.len() < cnt {
+                            let idx = rng.gen_range(0..len);
+                            if seen.insert(idx) {
+                                let (m, sc) = s.select_by_rank(idx);
+                                out.push(m.to_owned().into());
+                                if with_scores {
+                                    with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
+                                }
                             }
                         }
                     } else {
