@@ -323,6 +323,13 @@ impl<'a> Ctx<'a> {
             .query(&mut *self.con)
     }
 
+    fn scan_str(&mut self, key: &str, cursor: &str) -> RedisResult<(String, Vec<String>)> {
+        cmd(&zcmd(self.fam, "SCAN"))
+            .arg(key)
+            .arg(cursor)
+            .query(&mut *self.con)
+    }
+
     fn unionstore_weights(
         &mut self,
         dst: &str,
@@ -2526,17 +2533,34 @@ fn zscan_yields_full_set() {
         for i in 0..50 {
             ctx.add("scan", i as f64, &format!("m{i}")).unwrap();
         }
-        let mut cur = 0u64;
         let mut items = HashSet::new();
-        loop {
-            let (next, chunk) = ctx.scan("scan", cur).unwrap();
-            for pair in chunk.chunks(2) {
-                items.insert(pair[0].clone());
+        match ctx.fam {
+            Fam::BuiltIn => {
+                let mut cur = 0u64;
+                loop {
+                    let (next, chunk) = ctx.scan("scan", cur).unwrap();
+                    for pair in chunk.chunks(2) {
+                        items.insert(pair[0].clone());
+                    }
+                    if next == 0 {
+                        break;
+                    }
+                    cur = next;
+                }
             }
-            if next == 0 {
-                break;
+            Fam::Module => {
+                let mut cur = String::from("0");
+                loop {
+                    let (next, chunk) = ctx.scan_str("scan", &cur).unwrap();
+                    for pair in chunk.chunks(2) {
+                        items.insert(pair[0].clone());
+                    }
+                    if next == "0" {
+                        break;
+                    }
+                    cur = next;
+                }
             }
-            cur = next;
         }
         assert_eq!(items.len(), 50);
     });
