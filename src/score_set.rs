@@ -280,6 +280,17 @@ impl ScoreSet {
         None
     }
 
+    pub fn select_by_rank(&self, mut r: usize) -> (&str, f64) {
+        for (score, bucket) in &self.by_score {
+            if r < bucket.len() {
+                let id = bucket[r];
+                return (self.pool.get(id), score.0);
+            }
+            r -= bucket.len();
+        }
+        unreachable!("rank out of bounds");
+    }
+
     pub fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
         let len = self.members.len() as isize;
         if len == 0 {
