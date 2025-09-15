@@ -198,6 +198,43 @@ impl ScoreSet {
         self.mem_breakdown
     }
 
+    #[cfg(test)]
+    fn debug_validate_score_sizes(&self) {
+        let mut iter_total = 0usize;
+        for (score, bucket) in &self.by_score {
+            let size = self
+                .by_score_sizes
+                .get(score)
+                .copied()
+                .unwrap_or_else(|| panic!("missing size entry for score {score:?}"));
+            assert_eq!(
+                bucket.len(),
+                size,
+                "bucket length mismatch for score {score:?}",
+            );
+            iter_total += size;
+        }
+
+        let map_total: usize = self.by_score_sizes.values().copied().sum();
+        assert_eq!(
+            iter_total, map_total,
+            "by_score_sizes totals diverged: iter {iter_total} map {map_total}",
+        );
+        assert_eq!(
+            map_total,
+            self.members.len(),
+            "by_score_sizes total {map_total} != members len {}",
+            self.members.len(),
+        );
+
+        for score in self.by_score_sizes.keys() {
+            assert!(
+                self.by_score.contains_key(score),
+                "size entry without bucket for score {score:?}",
+            );
+        }
+    }
+
     #[inline]
     fn member_table_bytes(table: &CompactTable) -> usize {
         let raw = table.raw_table();
@@ -686,7 +723,9 @@ impl ScoreSet {
 mod tests {
     use super::*;
     use crate::memory::gzset_mem_usage;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
     use redis_module::raw::RedisModule_MallocSize;
+    use std::collections::HashSet;
     use std::os::raw::c_void;
 
     #[inline]
@@ -733,6 +772,161 @@ mod tests {
         }
 
         total
+    }
+
+    fn assert_rank_matches(set: &ScoreSet, seed: u64, round: usize, stage: &str) {
+        set.debug_validate_score_sizes();
+
+        let mut expected_rank = 0usize;
+        let mut iter_total = 0usize;
+        for (score, bucket) in &set.by_score {
+            let size = set
+                .by_score_sizes
+                .get(score)
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "seed {seed} round {round} stage {stage} missing size entry for score {score:?}"
+                    )
+                });
+            assert_eq!(
+                bucket.len(),
+                size,
+                "seed {seed} round {round} stage {stage} bucket length mismatch for score {score:?}",
+            );
+            for id in bucket {
+                let member = set.pool.get(*id);
+                let actual = set.rank(member).unwrap_or_else(|| {
+                    panic!(
+                        "seed {seed} round {round} stage {stage} missing rank for member {member}"
+                    )
+                });
+                assert_eq!(
+                    actual,
+                    expected_rank,
+                    "seed {seed} round {round} stage {stage} member {member} expected rank {expected_rank} got {actual}",
+                );
+                expected_rank += 1;
+            }
+            iter_total += size;
+        }
+
+        assert_eq!(
+            expected_rank,
+            set.len(),
+            "seed {seed} round {round} stage {stage} iterated members {expected_rank} != len {}",
+            set.len(),
+        );
+
+        let map_total: usize = set.by_score_sizes.values().copied().sum();
+        assert_eq!(
+            iter_total,
+            map_total,
+            "seed {seed} round {round} stage {stage} iter total {iter_total} != map total {map_total}",
+        );
+        assert_eq!(
+            map_total,
+            set.len(),
+            "seed {seed} round {round} stage {stage} map total {map_total} != len {}",
+            set.len(),
+        );
+
+        for score in set.by_score_sizes.keys() {
+            assert!(
+                set.by_score.contains_key(score),
+                "seed {seed} round {round} stage {stage} size entry without bucket for score {score:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn rank_remains_correct_under_churn() {
+        const SEEDS: [u64; 4] = [0, 1, 2, 3];
+        for &seed in &SEEDS {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut set = ScoreSet::default();
+            let mut members = Vec::new();
+            let mut next_id = 0usize;
+
+            for round in 0..5 {
+                let insert_count = rng.gen_range(50..=150);
+                for _ in 0..insert_count {
+                    let member = format!("m{seed}_{next_id}");
+                    next_id += 1;
+                    let score = rng.gen_range(-5000.0..5000.0);
+                    assert!(set.insert(score, &member));
+                    members.push(member);
+                }
+                assert_eq!(
+                    members.len(),
+                    set.len(),
+                    "seed {seed} round {round} stage after_initial_insert member tracking diverged",
+                );
+                assert_rank_matches(&set, seed, round, "after_initial_insert");
+
+                if !members.is_empty() {
+                    let removals = rng.gen_range(0..=members.len().min(40));
+                    for _ in 0..removals {
+                        let idx = rng.gen_range(0..members.len());
+                        let member = members.swap_remove(idx);
+                        assert!(set.remove(&member));
+                    }
+                }
+                assert_eq!(
+                    members.len(),
+                    set.len(),
+                    "seed {seed} round {round} stage after_remove member tracking diverged",
+                );
+                assert_rank_matches(&set, seed, round, "after_remove");
+
+                if !members.is_empty() {
+                    let min_pop = rng.gen_range(0..=members.len().min(40));
+                    if min_pop > 0 {
+                        let popped = set.pop_n(true, min_pop);
+                        let popped_names: HashSet<String> =
+                            popped.into_iter().map(|(name, _)| name).collect();
+                        members.retain(|m| !popped_names.contains(m));
+                    }
+                }
+                assert_eq!(
+                    members.len(),
+                    set.len(),
+                    "seed {seed} round {round} stage after_pop_min member tracking diverged",
+                );
+                assert_rank_matches(&set, seed, round, "after_pop_min");
+
+                if !members.is_empty() {
+                    let max_pop = rng.gen_range(0..=members.len().min(40));
+                    if max_pop > 0 {
+                        let popped = set.pop_n(false, max_pop);
+                        let popped_names: HashSet<String> =
+                            popped.into_iter().map(|(name, _)| name).collect();
+                        members.retain(|m| !popped_names.contains(m));
+                    }
+                }
+                assert_eq!(
+                    members.len(),
+                    set.len(),
+                    "seed {seed} round {round} stage after_pop_max member tracking diverged",
+                );
+                assert_rank_matches(&set, seed, round, "after_pop_max");
+
+                let additional = rng.gen_range(0..=100);
+                for _ in 0..additional {
+                    let member = format!("m{seed}_{next_id}");
+                    next_id += 1;
+                    let score = rng.gen_range(-5000.0..5000.0);
+                    assert!(set.insert(score, &member));
+                    members.push(member);
+                }
+                assert_eq!(
+                    members.len(),
+                    set.len(),
+                    "seed {seed} round {round} stage after_insert_more member tracking diverged",
+                );
+                assert_rank_matches(&set, seed, round, "after_insert_more");
+            }
+        }
     }
 
     #[test]
