@@ -33,7 +33,7 @@ jobs:
         run: cargo fmt -- --check
         shell: bash
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings -D clippy::to_string_in_format_args
+        run: cargo clippy --all-targets -- -D warnings -D clippy::to_string_in_format_args -D clippy::uninlined_format_args
         shell: bash
       - name: Check duplicates
         run: cargo tree -d
