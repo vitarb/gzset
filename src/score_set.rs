@@ -1,6 +1,6 @@
 use ordered_float::OrderedFloat;
 use smallvec::SmallVec;
-use std::{collections::BTreeMap, mem::size_of};
+use std::{collections::BTreeMap, convert::TryFrom, mem::size_of};
 
 use crate::{
     compact_table::CompactTable,
@@ -8,6 +8,9 @@ use crate::{
 };
 
 type Bucket = SmallVec<[MemberId; 4]>;
+
+/// Buckets shrink back to inline storage once they contain at most this many members.
+const BUCKET_SHRINK_THRESHOLD: usize = 4;
 
 const BTREE_NODE_CAP: usize = 11;
 const BTREE_NODE_HDR: usize = 48;
@@ -226,91 +229,125 @@ impl ScoreSet {
         BTREE_NODE_HDR + BTREE_NODE_CAP * (size_of::<K>() + size_of::<V>())
     }
 
+    #[inline]
+    fn maybe_shrink_bucket(bucket: &mut Bucket) -> isize {
+        if bucket.spilled() && bucket.len() <= BUCKET_SHRINK_THRESHOLD {
+            let bytes = bucket.capacity() * size_of::<MemberId>();
+            bucket.shrink_to_fit();
+            let bytes = isize::try_from(bytes).expect("bucket shrink delta overflow");
+            -bytes
+        } else {
+            0
+        }
+    }
+
+    #[inline]
+    fn apply_bucket_mem_delta(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        if delta > 0 {
+            let bytes = delta as usize;
+            self.mem_bytes += bytes;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.buckets += bytes;
+            }
+        } else {
+            let bytes = (-delta) as usize;
+            self.mem_bytes -= bytes;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.buckets -= bytes;
+            }
+        }
+    }
+
     pub fn insert(&mut self, score: f64, member: &str) -> bool {
         let key = OrderedFloat(score);
         let is_new = self.pool.lookup(member).is_none();
         let prev_table = Self::member_table_bytes(&self.members);
         let prev_map = Self::score_map_bytes(&self.by_score);
         let id = self.pool.intern(member);
-        let name = self.pool.get(id);
-        let old = self.members.get(id);
-        if !self.members.insert(id, score) {
-            if let Some(old_score) = old {
-                let old_key = OrderedFloat(old_score);
-                if old_key == key {
-                    return false;
-                }
-                if let Some(bucket) = self.by_score.get_mut(&old_key) {
-                    if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-                        bucket.remove(pos);
+        let mut bucket_delta: isize = 0;
+        let inserted = {
+            let name = self.pool.get(id);
+            let old = self.members.get(id);
+            if !self.members.insert(id, score) {
+                if let Some(old_score) = old {
+                    let old_key = OrderedFloat(old_score);
+                    if old_key == key {
+                        return false;
                     }
-                    if let Some(sz) = self.by_score_sizes.get_mut(&old_key) {
-                        *sz -= 1;
-                        if *sz == 0 {
-                            self.by_score_sizes.remove(&old_key);
+                    if let Some(bucket) = self.by_score.get_mut(&old_key) {
+                        if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
+                            bucket.remove(pos);
                         }
-                    }
-                    if bucket.is_empty() {
-                        self.by_score.remove(&old_key);
-                    } else if bucket.spilled() && bucket.len() <= 4 {
-                        let cap = bucket.capacity();
-                        bucket.shrink_to_fit();
-                        let bytes = cap * size_of::<MemberId>();
-                        self.mem_bytes -= bytes;
-                        #[cfg(test)]
-                        {
-                            self.mem_breakdown.buckets -= bytes;
+                        if let Some(sz) = self.by_score_sizes.get_mut(&old_key) {
+                            *sz -= 1;
+                            if *sz == 0 {
+                                self.by_score_sizes.remove(&old_key);
+                            }
+                        }
+                        if bucket.is_empty() {
+                            self.by_score.remove(&old_key);
+                        } else {
+                            bucket_delta = Self::maybe_shrink_bucket(bucket);
                         }
                     }
                 }
             }
-        }
-        let new_table = Self::member_table_bytes(&self.members);
-        self.mem_bytes += new_table - prev_table;
-        #[cfg(test)]
-        {
-            self.mem_breakdown.member_table += new_table - prev_table;
-        }
-        if is_new {
+            let new_table = Self::member_table_bytes(&self.members);
+            self.mem_bytes += new_table - prev_table;
             #[cfg(test)]
             {
-                self.mem_breakdown.strings += member.len();
+                self.mem_breakdown.member_table += new_table - prev_table;
             }
-        }
-        let bucket = self.by_score.entry(key).or_default();
-        let spilled_before = bucket.spilled();
-        match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-            Ok(_) => false,
-            Err(pos) => {
-                bucket.insert(pos, id);
-                *self.by_score_sizes.entry(key).or_insert(0) += 1;
-                if !spilled_before && bucket.spilled() {
-                    let bytes = bucket.capacity() * size_of::<MemberId>();
-                    self.mem_bytes += bytes;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.buckets += bytes;
-                    }
+            if is_new {
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.strings += member.len();
                 }
-                let new_map = Self::score_map_bytes(&self.by_score);
-                if new_map >= prev_map {
-                    let delta = new_map - prev_map;
-                    self.mem_bytes += delta;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.score_map += delta;
-                    }
-                } else {
-                    let delta = prev_map - new_map;
-                    self.mem_bytes -= delta;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.score_map -= delta;
-                    }
-                }
-                true
             }
+            let bucket = self.by_score.entry(key).or_default();
+            let spilled_before = bucket.spilled();
+            match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
+                Ok(_) => false,
+                Err(pos) => {
+                    bucket.insert(pos, id);
+                    *self.by_score_sizes.entry(key).or_insert(0) += 1;
+                    if !spilled_before && bucket.spilled() {
+                        let bytes = bucket.capacity() * size_of::<MemberId>();
+                        self.mem_bytes += bytes;
+                        #[cfg(test)]
+                        {
+                            self.mem_breakdown.buckets += bytes;
+                        }
+                    }
+                    let new_map = Self::score_map_bytes(&self.by_score);
+                    if new_map >= prev_map {
+                        let delta = new_map - prev_map;
+                        self.mem_bytes += delta;
+                        #[cfg(test)]
+                        {
+                            self.mem_breakdown.score_map += delta;
+                        }
+                    } else {
+                        let delta = prev_map - new_map;
+                        self.mem_bytes -= delta;
+                        #[cfg(test)]
+                        {
+                            self.mem_breakdown.score_map -= delta;
+                        }
+                    }
+                    true
+                }
+            }
+        };
+        if bucket_delta != 0 {
+            self.apply_bucket_mem_delta(bucket_delta);
         }
+        inserted
     }
 
     pub fn remove(&mut self, member: &str) -> bool {
@@ -325,6 +362,7 @@ impl ScoreSet {
         let prev_table = Self::member_table_bytes(&self.members);
         let prev_map = Self::score_map_bytes(&self.by_score);
         if self.members.remove(id) {
+            let mut bucket_delta: isize = 0;
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
                     bucket.remove(pos);
@@ -337,16 +375,12 @@ impl ScoreSet {
                 }
                 if bucket.is_empty() {
                     self.by_score.remove(&score);
-                } else if bucket.spilled() && bucket.len() <= 4 {
-                    let cap = bucket.capacity();
-                    bucket.shrink_to_fit();
-                    let bytes = cap * size_of::<MemberId>();
-                    self.mem_bytes -= bytes;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.buckets -= bytes;
-                    }
+                } else {
+                    bucket_delta = Self::maybe_shrink_bucket(bucket);
                 }
+            }
+            if bucket_delta != 0 {
+                self.apply_bucket_mem_delta(bucket_delta);
             }
             let new_table = Self::member_table_bytes(&self.members);
             if new_table >= prev_table {
@@ -541,7 +575,7 @@ impl ScoreSet {
 
     pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
         let prev_map = Self::score_map_bytes(&self.by_score);
-        let (score_key, id, shrink_bytes) = {
+        let (score_key, id, shrink_delta) = {
             let mut entry = if min {
                 self.by_score.first_entry()?
             } else {
@@ -554,28 +588,16 @@ impl ScoreSet {
             } else {
                 bucket.pop().expect("bucket must contain member")
             };
-            let shrink_bytes = if bucket.is_empty() {
-                0
-            } else if bucket.spilled() && bucket.len() <= 4 {
-                let cap = bucket.capacity();
-                bucket.shrink_to_fit();
-                cap * size_of::<MemberId>()
-            } else {
-                0
-            };
-            if bucket.is_empty() {
+            let shrink_delta = if bucket.is_empty() {
                 entry.remove_entry();
-            }
-            (score_key, id, shrink_bytes)
+                0
+            } else {
+                Self::maybe_shrink_bucket(bucket)
+            };
+            (score_key, id, shrink_delta)
         };
 
-        if shrink_bytes > 0 {
-            self.mem_bytes -= shrink_bytes;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.buckets -= shrink_bytes;
-            }
-        }
+        self.apply_bucket_mem_delta(shrink_delta);
 
         if let Some(sz) = self.by_score_sizes.get_mut(&score_key) {
             *sz -= 1;
@@ -811,5 +833,57 @@ mod tests {
         let set_ref = set.as_ref();
         assert!(set_ref.by_score.is_empty());
         assert!(set_ref.by_score_sizes.is_empty());
+    }
+
+    fn bucket_shrink_mem_on_pop(min: bool) {
+        let mut set = ScoreSet::default();
+        let total = super::BUCKET_SHRINK_THRESHOLD * 2;
+        for i in 0..total {
+            let member = format!("m{i}");
+            assert!(set.insert(1.0, &member));
+        }
+        let initial_cap = set
+            .bucket_capacity_for_test(1.0)
+            .expect("bucket should exist");
+        assert!(
+            initial_cap > super::BUCKET_SHRINK_THRESHOLD,
+            "expected spill before pops"
+        );
+
+        let before_mem = set.mem_bytes();
+        let before_buckets = set.debug_mem_breakdown().buckets;
+        assert!(before_buckets > 0, "bucket accounting should reflect spill");
+
+        for _ in 0..super::BUCKET_SHRINK_THRESHOLD {
+            assert!(set.pop_one(min).is_some());
+        }
+
+        assert_eq!(set.len(), super::BUCKET_SHRINK_THRESHOLD);
+
+        let after_mem = set.mem_bytes();
+        let after_buckets = set.debug_mem_breakdown().buckets;
+        assert!(
+            after_mem < before_mem,
+            "mem_bytes should shrink: before {before_mem} after {after_mem}"
+        );
+        assert!(
+            after_buckets < before_buckets,
+            "bucket breakdown should shrink: before {before_buckets} after {after_buckets}"
+        );
+        assert_eq!(after_buckets, 0, "bucket accounting should return inline");
+        assert_eq!(
+            set.bucket_capacity_for_test(1.0),
+            Some(super::BUCKET_SHRINK_THRESHOLD)
+        );
+    }
+
+    #[test]
+    fn bucket_shrink_updates_mem_on_min_pop() {
+        bucket_shrink_mem_on_pop(true);
+    }
+
+    #[test]
+    fn bucket_shrink_updates_mem_on_max_pop() {
+        bucket_shrink_mem_on_pop(false);
     }
 }
