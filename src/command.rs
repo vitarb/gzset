@@ -222,54 +222,19 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
-    let result = with_set_write(ctx, key, |set| {
-        let mut out = Vec::new();
-        for _ in 0..count {
-            let (score_key, id) = {
-                let mut entry = if min {
-                    match set.by_score.first_entry() {
-                        Some(e) => e,
-                        None => break,
-                    }
-                } else {
-                    match set.by_score.last_entry() {
-                        Some(e) => e,
-                        None => break,
-                    }
-                };
-                let score_key = *entry.key();
-                let (id, remove_score) = {
-                    let bucket = entry.get_mut();
-                    let id = if min {
-                        bucket.remove(0)
-                    } else {
-                        bucket.pop().unwrap()
-                    };
-                    let empty = bucket.is_empty();
-                    if !empty && bucket.spilled() && bucket.len() <= 4 {
-                        bucket.shrink_to_fit();
-                    }
-                    (id, empty)
-                };
-                if remove_score {
-                    entry.remove_entry();
-                }
-                (score_key, id)
-            };
-            set.members.remove(id);
-            let member = set.pool.get(id);
-            out.push(member.to_owned().into());
-            with_fmt_buf(|b| out.push(fmt_f64(b, score_key.0).to_owned().into()));
-        }
-        out
-    })?;
-    if result.is_empty() {
+    let popped = with_set_write(ctx, key, |set| set.pop_n(min, count))?;
+    if popped.is_empty() {
         if count == 1 {
             Ok(RedisValue::Null)
         } else {
             Ok(RedisValue::Array(Vec::new()))
         }
     } else {
+        let mut result = Vec::with_capacity(popped.len() * 2);
+        for (member, score) in popped {
+            result.push(member.into());
+            with_fmt_buf(|b| result.push(fmt_f64(b, score).to_owned().into()));
+        }
         Ok(RedisValue::Array(result))
     }
 }
