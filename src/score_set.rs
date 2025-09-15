@@ -538,6 +538,112 @@ impl ScoreSet {
             .is_some_and(|id| self.members.get(id).is_some())
     }
 
+    pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
+        let prev_map = Self::score_map_bytes(&self.by_score);
+        let (score_key, id, shrink_bytes) = {
+            let mut entry = if min {
+                self.by_score.first_entry()?
+            } else {
+                self.by_score.last_entry()?
+            };
+            let score_key = *entry.key();
+            let bucket = entry.get_mut();
+            let id = if min {
+                bucket.remove(0)
+            } else {
+                bucket.pop().expect("bucket must contain member")
+            };
+            let shrink_bytes = if bucket.is_empty() {
+                0
+            } else if bucket.spilled() && bucket.len() <= 4 {
+                let cap = bucket.capacity();
+                bucket.shrink_to_fit();
+                cap * size_of::<MemberId>()
+            } else {
+                0
+            };
+            if bucket.is_empty() {
+                entry.remove_entry();
+            }
+            (score_key, id, shrink_bytes)
+        };
+
+        if shrink_bytes > 0 {
+            self.mem_bytes -= shrink_bytes;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.buckets -= shrink_bytes;
+            }
+        }
+
+        if let Some(sz) = self.by_score_sizes.get_mut(&score_key) {
+            *sz -= 1;
+            if *sz == 0 {
+                self.by_score_sizes.remove(&score_key);
+            }
+        }
+
+        let prev_table = Self::member_table_bytes(&self.members);
+        let removed = self.members.remove(id);
+        debug_assert!(removed, "member removed from score map must exist in table");
+        let new_table = Self::member_table_bytes(&self.members);
+        if new_table >= prev_table {
+            let delta = new_table - prev_table;
+            self.mem_bytes += delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.member_table += delta;
+            }
+        } else {
+            let delta = prev_table - new_table;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.member_table -= delta;
+            }
+        }
+
+        let name = self.pool.get(id).to_owned();
+        if self.pool.remove(&name).is_some() {
+            let bytes = name.len() * 2;
+            self.mem_bytes -= bytes;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.strings -= bytes;
+            }
+        }
+
+        let new_map = Self::score_map_bytes(&self.by_score);
+        if new_map >= prev_map {
+            let delta = new_map - prev_map;
+            self.mem_bytes += delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map += delta;
+            }
+        } else {
+            let delta = prev_map - new_map;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map -= delta;
+            }
+        }
+
+        Some((name, score_key.0))
+    }
+
+    pub fn pop_n(&mut self, min: bool, n: usize) -> Vec<(String, f64)> {
+        let mut out = Vec::with_capacity(n.min(self.len()));
+        for _ in 0..n {
+            match self.pop_one(min) {
+                Some(item) => out.push(item),
+                None => break,
+            }
+        }
+        out
+    }
+
     #[doc(hidden)]
     pub fn bucket_capacity_for_test(&self, score: f64) -> Option<usize> {
         self.by_score
@@ -547,78 +653,11 @@ impl ScoreSet {
 
     #[cfg(any(test, feature = "bench"))]
     pub fn pop_all(&mut self, min: bool) -> Vec<String> {
-        let prev_map = Self::score_map_bytes(&self.by_score);
-        let mut out = Vec::new();
-        while !self.by_score.is_empty() {
-            let mut entry = if min {
-                self.by_score.first_entry().unwrap()
-            } else {
-                self.by_score.last_entry().unwrap()
-            };
-            let score_key = *entry.key();
-            let bucket = entry.get_mut();
-            let id = if min {
-                bucket.remove(0)
-            } else {
-                bucket.pop().unwrap()
-            };
-            if let Some(sz) = self.by_score_sizes.get_mut(&score_key) {
-                *sz -= 1;
-                if *sz == 0 {
-                    self.by_score_sizes.remove(&score_key);
-                }
-            }
-            if bucket.is_empty() {
-                entry.remove_entry();
-            } else if bucket.spilled() && bucket.len() <= 4 {
-                let cap = bucket.capacity();
-                bucket.shrink_to_fit();
-                let bytes = cap * size_of::<MemberId>();
-                self.mem_bytes -= bytes;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.buckets -= bytes;
-                }
-            }
-            let prev_table = Self::member_table_bytes(&self.members);
-            self.members.remove(id);
-            let new_table = Self::member_table_bytes(&self.members);
-            if new_table >= prev_table {
-                let delta = new_table - prev_table;
-                self.mem_bytes += delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.member_table += delta;
-                }
-            } else {
-                let delta = prev_table - new_table;
-                self.mem_bytes -= delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.member_table -= delta;
-                }
-            }
-            let name = self.pool.get(id).to_owned();
-            if self.pool.remove(&name).is_some() {
-                let bytes = name.len() * 2;
-                self.mem_bytes -= bytes;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.strings -= bytes;
-                }
-            }
-            out.push(name);
-        }
-        let new_map = Self::score_map_bytes(&self.by_score);
-        if prev_map > new_map {
-            let delta = prev_map - new_map;
-            self.mem_bytes -= delta;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.score_map -= delta;
-            }
-        }
-        out
+        let total = self.len();
+        self.pop_n(min, total)
+            .into_iter()
+            .map(|(member, _)| member)
+            .collect()
     }
 }
 
@@ -668,5 +707,51 @@ mod tests {
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
+    }
+
+    #[test]
+    fn pop_updates_internal_state() {
+        let mut set = ScoreSet::default();
+        let items = [
+            (1.0, "a1"),
+            (1.0, "a2"),
+            (2.0, "b1"),
+            (2.0, "b2"),
+            (3.0, "c1"),
+            (4.0, "d1"),
+        ];
+        for (score, member) in items {
+            assert!(set.insert(score, member));
+        }
+        let initial_len = set.len();
+        let initial_mem = set.mem_bytes();
+
+        let popped = set.pop_n(true, 3);
+        assert_eq!(popped.len(), 3);
+        assert_eq!(
+            popped,
+            vec![
+                ("a1".to_string(), 1.0),
+                ("a2".to_string(), 1.0),
+                ("b1".to_string(), 2.0)
+            ]
+        );
+        assert_eq!(set.len(), initial_len - popped.len());
+        assert!(set.mem_bytes() < initial_mem);
+
+        for (score, bucket) in &set.by_score {
+            let sz = set.by_score_sizes.get(score).copied().unwrap_or_default();
+            assert_eq!(bucket.len(), sz, "score {score:?}");
+        }
+
+        let remaining = set.range_iter(0, -1);
+        for (idx, (_, member)) in remaining.iter().enumerate() {
+            assert_eq!(set.rank(member), Some(idx));
+        }
+
+        while set.pop_one(true).is_some() {}
+        assert!(set.is_empty());
+        assert!(set.by_score.is_empty());
+        assert!(set.by_score_sizes.is_empty());
     }
 }
