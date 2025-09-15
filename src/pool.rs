@@ -6,6 +6,7 @@ use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 #[cfg(feature = "fast-hash")]
 use std::hash::BuildHasherDefault;
+use std::ptr::NonNull;
 
 #[cfg(feature = "fast-hash")]
 /// FxHasher-based map used only when the `fast-hash` feature is enabled.
@@ -18,7 +19,7 @@ pub type MemberId = u32;
 #[derive(Default, Debug)]
 pub struct StringPool {
     pub(crate) map: FastHashMap<Box<str>, MemberId>,
-    pub(crate) strings: Vec<Option<Box<str>>>,
+    pub(crate) strings: Vec<Option<NonNull<str>>>,
     pub(crate) free_ids: Vec<MemberId>,
 }
 
@@ -28,12 +29,13 @@ impl StringPool {
             id
         } else {
             let boxed: Box<str> = s.to_owned().into_boxed_str();
+            let ptr = NonNull::from(&*boxed);
             let id = if let Some(id) = self.free_ids.pop() {
-                self.strings[id as usize] = Some(boxed.clone());
+                self.strings[id as usize] = Some(ptr);
                 id
             } else {
                 let id = self.strings.len() as MemberId;
-                self.strings.push(Some(boxed.clone()));
+                self.strings.push(Some(ptr));
                 id
             };
             self.map.insert(boxed, id);
@@ -46,9 +48,13 @@ impl StringPool {
     }
 
     pub fn get(&self, id: MemberId) -> &str {
-        self.strings[id as usize]
-            .as_deref()
-            .expect("invalid member id")
+        unsafe {
+            self.strings
+                .get(id as usize)
+                .and_then(|opt| opt.as_ref())
+                .map(|ptr| ptr.as_ref())
+                .expect("invalid member id")
+        }
     }
 
     pub fn remove(&mut self, s: &str) -> Option<MemberId> {
