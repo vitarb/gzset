@@ -3,8 +3,11 @@ import json, sys, glob
 GROUP = "pop_loop_vs_baseline"
 
 def read_mean(path):
-    with open(path) as f:
-        return json.load(f)["mean"]["point_estimate"]
+    try:
+        with open(path) as f:
+            return json.load(f)["mean"]["point_estimate"]
+    except json.JSONDecodeError as e:
+        sys.exit(f"[bench] invalid JSON in {path}: {e}")
 
 def sum_means(baseline):
     # Works whether Criterion organizes as group/function/baseline or group/baseline

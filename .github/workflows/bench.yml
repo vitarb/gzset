@@ -30,7 +30,7 @@ jobs:
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.sha }}"
           git checkout "$BASE_SHA"
-          cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline base
+          cargo bench -p gzset --bench gzpop --features bench -- --quiet --noplot --sample-size 10 --save-baseline base
           git checkout "$HEAD_SHA"
 
       - name: Save baseline (base) — push
@@ -39,11 +39,11 @@ jobs:
           BASE_SHA="$(git rev-parse HEAD^)"
           HEAD_SHA="${{ github.sha }}"
           git checkout "$BASE_SHA"
-          cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline base
+          cargo bench -p gzset --bench gzpop --features bench -- --quiet --noplot --sample-size 10 --save-baseline base
           git checkout "$HEAD_SHA"
 
       - name: Run current benches (new)
-        run: cargo bench -p gzset --bench gzpop --features bench -- --quiet --sample-size 10 --save-baseline new
+        run: cargo bench -p gzset --bench gzpop --features bench -- --quiet --noplot --sample-size 10 --save-baseline new
 
       - name: Enforce pop-loop speedup
         run: python3 .github/scripts/check_pop.py
