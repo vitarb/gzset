@@ -20,6 +20,20 @@ fn used_memory(con: &mut redis::Connection) -> redis::RedisResult<i64> {
         .unwrap())
 }
 
+fn wait_for_stable_memory(con: &mut redis::Connection) -> redis::RedisResult<i64> {
+    const STABILITY_THRESHOLD: u64 = 1024;
+    let mut last = used_memory(con)?;
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(50));
+        let current = used_memory(con)?;
+        if last.abs_diff(current) <= STABILITY_THRESHOLD {
+            return Ok(current);
+        }
+        last = current;
+    }
+    Ok(last)
+}
+
 #[test]
 fn memory_profile() -> redis::RedisResult<()> {
     let vk = helpers::ValkeyInstance::start();
@@ -38,8 +52,7 @@ fn memory_profile() -> redis::RedisResult<()> {
         // ---- GZSET ---------------------------------------------------------
         redis::cmd("FLUSHALL").query::<()>(&mut con)?;
         redis::cmd("MEMORY").arg("PURGE").query::<()>(&mut con)?;
-        std::thread::sleep(Duration::from_millis(50)); // allow purge to settle
-        let base = used_memory(&mut con)?;
+        let base = wait_for_stable_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
         (0..n).for_each(|i| {
@@ -56,8 +69,7 @@ fn memory_profile() -> redis::RedisResult<()> {
         // ---- ZSET ----------------------------------------------------------
         redis::cmd("DEL").arg("gz").query::<()>(&mut con)?;
         redis::cmd("MEMORY").arg("PURGE").query::<()>(&mut con)?;
-        std::thread::sleep(Duration::from_millis(50)); // allow purge to settle
-        let base2 = used_memory(&mut con)?;
+        let base2 = wait_for_stable_memory(&mut con)?;
 
         let mut pipe = redis::pipe();
         (0..n).for_each(|i| {
