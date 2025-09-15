@@ -547,24 +547,51 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
 }
 
 fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
-    if args.len() != 3 {
+    if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
     let cursor = args[2].try_as_str()?;
-    const BATCH: usize = 10;
+
+    const DEFAULT_COUNT: usize = 10;
+    const MAX_COUNT: usize = 1024;
+
+    let mut count = DEFAULT_COUNT;
+    let mut idx = 3;
+    let mut seen_count = false;
+    while idx < args.len() {
+        let opt = args[idx].try_as_str()?;
+        if opt.eq_ignore_ascii_case("COUNT") {
+            if seen_count {
+                return Err(RedisError::Str("ERR syntax error"));
+            }
+            idx += 1;
+            if idx >= args.len() {
+                return Err(RedisError::Str("ERR syntax error"));
+            }
+            let raw = args[idx].parse_integer()?;
+            if raw <= 0 || raw as usize > MAX_COUNT {
+                return Err(RedisError::Str("ERR COUNT must be between 1 and 1024"));
+            }
+            count = raw as usize;
+            seen_count = true;
+            idx += 1;
+        } else {
+            return Err(RedisError::Str("ERR syntax error"));
+        }
+    }
 
     fn encode_cursor(score: f64, member: &str) -> String {
         with_fmt_buf(|b| {
             let score_s = fmt_f64(b, score);
-            let mut out = String::with_capacity(score_s.len() + 1 + member.len());
+            let mut out = String::with_capacity(score_s.len() + 1 + member.len() * 3);
             out.push_str(score_s);
             out.push('|');
-            for ch in member.as_bytes() {
-                if *ch == b'|' {
-                    out.push_str("%7C");
-                } else {
-                    out.push(*ch as char);
+            for ch in member.chars() {
+                match ch {
+                    '|' => out.push_str("%7C"),
+                    '%' => out.push_str("%25"),
+                    _ => out.push(ch),
                 }
             }
             out
@@ -573,12 +600,41 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
 
     fn decode_cursor(cur: &str) -> Option<(f64, String)> {
         let (score_s, member_s) = cur.split_once('|')?;
-        let score = score_s.parse().ok()?;
-        let member = if member_s.contains("%7C") {
-            member_s.replace("%7C", "|")
-        } else {
-            member_s.to_string()
-        };
+        let score = score_s.parse::<f64>().ok()?;
+        if !score.is_finite() {
+            return None;
+        }
+        if !with_fmt_buf(|b| fmt_f64(b, score) == score_s) {
+            return None;
+        }
+
+        fn decode_hex(b: u8) -> Option<u8> {
+            match b {
+                b'0'..=b'9' => Some(b - b'0'),
+                b'a'..=b'f' => Some(b - b'a' + 10),
+                b'A'..=b'F' => Some(b - b'A' + 10),
+                _ => None,
+            }
+        }
+
+        let bytes = member_s.as_bytes();
+        let mut member_bytes = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' {
+                if i + 2 >= bytes.len() {
+                    return None;
+                }
+                let hi = decode_hex(bytes[i + 1])?;
+                let lo = decode_hex(bytes[i + 2])?;
+                member_bytes.push((hi << 4) | lo);
+                i += 3;
+            } else {
+                member_bytes.push(bytes[i]);
+                i += 1;
+            }
+        }
+        let member = String::from_utf8(member_bytes).ok()?;
         Some((score, member))
     }
 
@@ -607,7 +663,7 @@ fn gzscan(_ctx: &Context, args: Vec<RedisString>) -> Result {
 
             let mut arr = Vec::new();
             let mut last = None;
-            for _ in 0..BATCH {
+            for _ in 0..count {
                 if let Some((m, sc)) = iter.next() {
                     arr.push(m.to_owned().into());
                     with_fmt_buf(|b| arr.push(fmt_f64(b, sc).to_owned().into()));
