@@ -39,7 +39,7 @@ pub unsafe extern "C" fn gzset_free(value: *mut c_void) {
 unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
     let mut total = ms(set as *const _ as *const _);
 
-    // tracked by ScoreSet::mem_bytes (buckets, member table, strings, by_score BTreeMap)
+    // tracked by ScoreSet::mem_bytes (buckets, member table, by_score BTreeMap)
     total += set.mem_bytes();
 
     // Add the auxiliary by_score_sizes BTreeMap overhead (keys + values).
