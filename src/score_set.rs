@@ -267,7 +267,7 @@ impl ScoreSet {
             self.mem_breakdown.member_table += new_table - prev_table;
         }
         if is_new {
-            let bytes = member.len() * 2;
+            let bytes = member.len();
             self.mem_bytes += bytes;
             #[cfg(test)]
             {
@@ -378,7 +378,7 @@ impl ScoreSet {
                 }
             }
             if self.pool.remove(member).is_some() {
-                let bytes = member.len() * 2;
+                let bytes = member.len();
                 self.mem_bytes -= bytes;
                 #[cfg(test)]
                 {
@@ -605,7 +605,7 @@ impl ScoreSet {
 
         let name = self.pool.get(id).to_owned();
         if self.pool.remove(&name).is_some() {
-            let bytes = name.len() * 2;
+            let bytes = name.len();
             self.mem_bytes -= bytes;
             #[cfg(test)]
             {
