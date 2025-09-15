@@ -51,21 +51,14 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
         total += sizes_nodes * size_class(node_bytes);
     }
 
-    #[cfg(feature = "fast-hash")]
-    {
-        let table = set.pool.map.raw_table();
-        if table.capacity() > 0 {
-            let (ptr, _) = table.allocation_info();
-            total += ms(ptr.as_ptr().cast());
-            let buckets = table.buckets();
-            total += size_class(16 + buckets);
-        }
-    }
-    #[cfg(not(feature = "fast-hash"))]
-    {
-        if set.pool.map.capacity() > 0 {
-            let buckets = set.pool.map.capacity();
-            total += size_class(16 + buckets);
+    let table = set.pool.map.raw_table();
+    if table.buckets() > 0 {
+        let (ptr, layout) = table.allocation_info();
+        let table_bytes = ms(ptr.as_ptr().cast());
+        if table_bytes > 0 {
+            total += table_bytes;
+        } else {
+            total += size_class(layout.size());
         }
     }
     for key in set.pool.map.keys() {

@@ -688,19 +688,14 @@ mod tests {
                 sizes_nodes * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
         }
 
-        #[cfg(feature = "fast-hash")]
-        {
-            let table = set.pool.map.raw_table();
-            if table.capacity() > 0 {
-                let (ptr, _) = table.allocation_info();
-                total += ms(ptr.as_ptr().cast());
-                total += size_class(16 + table.buckets());
-            }
-        }
-        #[cfg(not(feature = "fast-hash"))]
-        {
-            if set.pool.map.capacity() > 0 {
-                total += size_class(16 + set.pool.map.capacity());
+        let table = set.pool.map.raw_table();
+        if table.buckets() > 0 {
+            let (ptr, layout) = table.allocation_info();
+            let table_bytes = ms(ptr.as_ptr().cast());
+            if table_bytes > 0 {
+                total += table_bytes;
+            } else {
+                total += size_class(layout.size());
             }
         }
 

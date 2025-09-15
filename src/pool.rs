@@ -1,6 +1,5 @@
 #[cfg(not(feature = "fast-hash"))]
-use ahash::AHashMap;
-#[cfg(feature = "fast-hash")]
+use hashbrown::hash_map::DefaultHashBuilder;
 use hashbrown::HashMap;
 #[cfg(feature = "fast-hash")]
 use rustc_hash::FxHasher;
@@ -10,10 +9,12 @@ use std::ptr::NonNull;
 
 #[cfg(feature = "fast-hash")]
 /// FxHasher-based map used only when the `fast-hash` feature is enabled.
-pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+type FastHashBuilder = BuildHasherDefault<FxHasher>;
 #[cfg(not(feature = "fast-hash"))]
-/// Default to `AHashMap` for DOS-resistant hashing of user-provided names.
-pub type FastHashMap<K, V> = AHashMap<K, V>;
+/// Default to `AHash` for DOS-resistant hashing of user-provided names.
+type FastHashBuilder = DefaultHashBuilder;
+/// Hash map implementation used by the string pool.
+pub type FastHashMap<K, V> = HashMap<K, V, FastHashBuilder>;
 pub type MemberId = u32;
 
 #[derive(Default, Debug)]
