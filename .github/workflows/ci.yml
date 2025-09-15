@@ -36,7 +36,10 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings -D clippy::to_string_in_format_args
         shell: bash
       - name: Check duplicates
-        run: cargo tree -d
+        run: |
+          OUT="$(cargo tree -d)"
+          echo "$OUT"
+          test -z "$OUT" || { echo "::error::duplicate dependencies detected"; exit 1; }
         shell: bash
       - name: Test
         run: cargo test --all --all-targets --verbose
