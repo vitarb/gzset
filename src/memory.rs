@@ -1,10 +1,6 @@
 use crate::score_set::ScoreSet;
 use redis_module::raw::RedisModule_MallocSize;
-use std::mem::size_of;
 use std::os::raw::c_void;
-
-const BTREE_NODE_CAP: usize = 11;
-const BTREE_NODE_HDR: usize = 48; // matches score_set.rs approximation
 
 #[inline]
 const fn size_class(bytes: usize) -> usize {
@@ -13,11 +9,6 @@ const fn size_class(bytes: usize) -> usize {
     } else {
         bytes.next_power_of_two()
     }
-}
-
-#[inline]
-fn btree_nodes(elem: usize) -> usize {
-    elem.div_ceil(BTREE_NODE_CAP)
 }
 
 #[inline]
@@ -41,15 +32,6 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
 
     // tracked by ScoreSet::mem_bytes (buckets, member table, by_score BTreeMap)
     total += set.mem_bytes();
-
-    // Add the auxiliary by_score_sizes BTreeMap overhead (keys + values).
-    // We mirror the approximation used in score_set.rs.
-    let sizes_nodes = btree_nodes(set.by_score_sizes.len());
-    if sizes_nodes > 0 {
-        let node_bytes = BTREE_NODE_HDR
-            + BTREE_NODE_CAP * (size_of::<ordered_float::OrderedFloat<f64>>() + size_of::<usize>());
-        total += sizes_nodes * size_class(node_bytes);
-    }
 
     let table = set.pool.map.raw_table();
     if table.buckets() > 0 {

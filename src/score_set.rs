@@ -27,7 +27,6 @@ const fn size_class(bytes: usize) -> usize {
 #[derive(Default)]
 pub struct ScoreSet {
     pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
-    pub(crate) by_score_sizes: BTreeMap<OrderedFloat<f64>, usize>,
     pub(crate) members: CompactTable,
     pub(crate) pool: StringPool,
     mem_bytes: usize,
@@ -198,43 +197,6 @@ impl ScoreSet {
         self.mem_breakdown
     }
 
-    #[cfg(test)]
-    fn debug_validate_score_sizes(&self) {
-        let mut iter_total = 0usize;
-        for (score, bucket) in &self.by_score {
-            let size = self
-                .by_score_sizes
-                .get(score)
-                .copied()
-                .unwrap_or_else(|| panic!("missing size entry for score {score:?}"));
-            assert_eq!(
-                bucket.len(),
-                size,
-                "bucket length mismatch for score {score:?}",
-            );
-            iter_total += size;
-        }
-
-        let map_total: usize = self.by_score_sizes.values().copied().sum();
-        assert_eq!(
-            iter_total, map_total,
-            "by_score_sizes totals diverged: iter {iter_total} map {map_total}",
-        );
-        assert_eq!(
-            map_total,
-            self.members.len(),
-            "by_score_sizes total {map_total} != members len {}",
-            self.members.len(),
-        );
-
-        for score in self.by_score_sizes.keys() {
-            assert!(
-                self.by_score.contains_key(score),
-                "size entry without bucket for score {score:?}",
-            );
-        }
-    }
-
     #[inline]
     fn member_table_bytes(table: &CompactTable) -> usize {
         let raw = table.raw_table();
@@ -320,12 +282,6 @@ impl ScoreSet {
                         if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
                             bucket.remove(pos);
                         }
-                        if let Some(sz) = self.by_score_sizes.get_mut(&old_key) {
-                            *sz -= 1;
-                            if *sz == 0 {
-                                self.by_score_sizes.remove(&old_key);
-                            }
-                        }
                         if bucket.is_empty() {
                             self.by_score.remove(&old_key);
                         } else {
@@ -352,7 +308,6 @@ impl ScoreSet {
                 Ok(_) => false,
                 Err(pos) => {
                     bucket.insert(pos, id);
-                    *self.by_score_sizes.entry(key).or_insert(0) += 1;
                     if !spilled_before && bucket.spilled() {
                         let bytes = bucket.capacity() * size_of::<MemberId>();
                         self.mem_bytes += bytes;
@@ -403,12 +358,6 @@ impl ScoreSet {
             if let Some(bucket) = self.by_score.get_mut(&score) {
                 if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
                     bucket.remove(pos);
-                }
-                if let Some(sz) = self.by_score_sizes.get_mut(&score) {
-                    *sz -= 1;
-                    if *sz == 0 {
-                        self.by_score_sizes.remove(&score);
-                    }
                 }
                 if bucket.is_empty() {
                     self.by_score.remove(&score);
@@ -475,11 +424,12 @@ impl ScoreSet {
         let pos = bucket
             .binary_search_by(|&m| self.pool.get(m).cmp(member))
             .ok()?;
-        let mut idx = 0usize;
-        for (_, sz) in self.by_score_sizes.range(..score_key) {
-            idx += *sz;
-        }
-        Some(idx + pos)
+        let prefix = self
+            .by_score
+            .range(..score_key)
+            .map(|(_, bucket)| bucket.len())
+            .sum::<usize>();
+        Some(prefix + pos)
     }
 
     pub fn select_by_rank(&self, mut r: usize) -> (&str, f64) {
@@ -636,13 +586,6 @@ impl ScoreSet {
 
         self.apply_bucket_mem_delta(shrink_delta);
 
-        if let Some(sz) = self.by_score_sizes.get_mut(&score_key) {
-            *sz -= 1;
-            if *sz == 0 {
-                self.by_score_sizes.remove(&score_key);
-            }
-        }
-
         let prev_table = Self::member_table_bytes(&self.members);
         let removed = self.members.remove(id);
         debug_assert!(removed, "member removed from score map must exist in table");
@@ -743,12 +686,6 @@ mod tests {
         debug_assert_eq!(set.mem_bytes(), breakdown.structural());
         total += breakdown.structural();
 
-        let sizes_nodes = ScoreSet::btree_nodes(set.by_score_sizes.len());
-        if sizes_nodes > 0 {
-            total +=
-                sizes_nodes * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
-        }
-
         let table = set.pool.map.raw_table();
         if table.buckets() > 0 {
             let (ptr, layout) = table.allocation_info();
@@ -775,24 +712,12 @@ mod tests {
     }
 
     fn assert_rank_matches(set: &ScoreSet, seed: u64, round: usize, stage: &str) {
-        set.debug_validate_score_sizes();
-
         let mut expected_rank = 0usize;
         let mut iter_total = 0usize;
         for (score, bucket) in &set.by_score {
-            let size = set
-                .by_score_sizes
-                .get(score)
-                .copied()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "seed {seed} round {round} stage {stage} missing size entry for score {score:?}"
-                    )
-                });
-            assert_eq!(
-                bucket.len(),
-                size,
-                "seed {seed} round {round} stage {stage} bucket length mismatch for score {score:?}",
+            assert!(
+                !bucket.is_empty(),
+                "seed {seed} round {round} stage {stage} score {score:?} has empty bucket",
             );
             for id in bucket {
                 let member = set.pool.get(*id);
@@ -808,7 +733,7 @@ mod tests {
                 );
                 expected_rank += 1;
             }
-            iter_total += size;
+            iter_total += bucket.len();
         }
 
         assert_eq!(
@@ -818,25 +743,12 @@ mod tests {
             set.len(),
         );
 
-        let map_total: usize = set.by_score_sizes.values().copied().sum();
         assert_eq!(
             iter_total,
-            map_total,
-            "seed {seed} round {round} stage {stage} iter total {iter_total} != map total {map_total}",
-        );
-        assert_eq!(
-            map_total,
             set.len(),
-            "seed {seed} round {round} stage {stage} map total {map_total} != len {}",
+            "seed {seed} round {round} stage {stage} iter total {iter_total} != len {}",
             set.len(),
         );
-
-        for score in set.by_score_sizes.keys() {
-            assert!(
-                set.by_score.contains_key(score),
-                "seed {seed} round {round} stage {stage} size entry without bucket for score {score:?}",
-            );
-        }
     }
 
     #[test]
@@ -1008,14 +920,15 @@ mod tests {
         }
 
         let set_ref = set.as_ref();
+        let mut total_members = 0usize;
         for (score, bucket) in &set_ref.by_score {
-            let sz = set_ref
-                .by_score_sizes
-                .get(score)
-                .copied()
-                .unwrap_or_default();
-            assert_eq!(bucket.len(), sz, "score {score:?}");
+            assert!(
+                !bucket.is_empty(),
+                "score {score:?} should not have empty bucket",
+            );
+            total_members += bucket.len();
         }
+        assert_eq!(total_members, set_ref.len());
 
         let remaining = set.range_iter(0, -1);
         for (idx, (_, member)) in remaining.iter().enumerate() {
@@ -1026,7 +939,6 @@ mod tests {
         assert!(set.is_empty());
         let set_ref = set.as_ref();
         assert!(set_ref.by_score.is_empty());
-        assert!(set_ref.by_score_sizes.is_empty());
     }
 
     fn bucket_shrink_mem_on_pop(min: bool) {
