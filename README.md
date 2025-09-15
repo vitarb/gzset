@@ -136,9 +136,9 @@ Each set lives as a Valkey key holding a `ScoreSet` value. Commands open the
 key directly and operate on its data; no global map or flush handler is needed.
 Valkey handles key eviction and expiry automatically.
 
-> **Note:** member strings are interned in a per‑set pool and are not
-> reclaimed when removed. Long‑lived sets that churn will retain the old
-> strings until the entire set is dropped.
+> **Note:** member strings are interned in a per‑set pool. When a member is
+> removed, its `Box<str>` is dropped and the ID is reused; the vector that
+> stores IDs may retain capacity (amortized), but string memory itself is reclaimed.
 Future work will:
 
 1. Add RDB/AOF serialization hooks.
