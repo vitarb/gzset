@@ -7,28 +7,35 @@ extern "C" {
 
 #[test]
 fn mem_bytes_tracking() {
-    let mut set = ScoreSet::default();
-    let mut prev = set.mem_bytes();
-    for i in 0..1000 {
-        let m = format!("m{i:0200}");
-        assert!(set.insert(i as f64, &m));
-        let now = set.mem_bytes();
-        assert!(now > prev, "mem_bytes should increase on insert");
-        prev = now;
+    let mut set = Box::new(ScoreSet::default());
+    for i in 0..10 {
+        let m = format!("m{i}");
+        assert!(set.insert(0.0, &m));
     }
-    unsafe {
-        let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-        let mb = set.mem_bytes();
-        assert!(
-            (usage as f64) <= (mb as f64 * 1.2) && (usage as f64) >= (mb as f64 * 0.8),
-            "usage {usage} mem_bytes {mb}"
-        );
-    }
-    for i in 0..1000 {
-        let m = format!("m{i:0200}");
+
+    let before_mem = set.mem_bytes();
+    let before_usage = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
+
+    for i in 0..6 {
+        let m = format!("m{i}");
         assert!(set.remove(&m));
-        let now = set.mem_bytes();
-        assert!(now < prev, "mem_bytes should decrease on remove");
-        prev = now;
     }
+
+    let after_mem = set.mem_bytes();
+    let after_usage = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
+
+    assert!(
+        after_mem < before_mem,
+        "mem_bytes should shrink after removals: before {before_mem} after {after_mem}"
+    );
+    assert!(
+        after_usage < before_usage,
+        "usage should shrink after removals: before {before_usage} after {after_usage}"
+    );
+
+    for i in 6..10 {
+        let m = format!("m{i}");
+        assert!(set.remove(&m));
+    }
+    assert!(set.is_empty());
 }

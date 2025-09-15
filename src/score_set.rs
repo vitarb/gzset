@@ -44,8 +44,13 @@ pub struct MemBreakdown {
 #[cfg(test)]
 impl MemBreakdown {
     #[inline]
+    pub fn structural(&self) -> usize {
+        self.score_map + self.buckets + self.member_table
+    }
+
+    #[inline]
     pub fn total(&self) -> usize {
-        self.score_map + self.buckets + self.member_table + self.strings
+        self.structural() + self.strings
     }
 }
 
@@ -267,11 +272,9 @@ impl ScoreSet {
             self.mem_breakdown.member_table += new_table - prev_table;
         }
         if is_new {
-            let bytes = member.len();
-            self.mem_bytes += bytes;
             #[cfg(test)]
             {
-                self.mem_breakdown.strings += bytes;
+                self.mem_breakdown.strings += member.len();
             }
         }
         let bucket = self.by_score.entry(key).or_default();
@@ -378,11 +381,9 @@ impl ScoreSet {
                 }
             }
             if self.pool.remove(member).is_some() {
-                let bytes = member.len();
-                self.mem_bytes -= bytes;
                 #[cfg(test)]
                 {
-                    self.mem_breakdown.strings -= bytes;
+                    self.mem_breakdown.strings -= member.len();
                 }
             }
             true
@@ -605,11 +606,9 @@ impl ScoreSet {
 
         let name = self.pool.get(id).to_owned();
         if self.pool.remove(&name).is_some() {
-            let bytes = name.len();
-            self.mem_bytes -= bytes;
             #[cfg(test)]
             {
-                self.mem_breakdown.strings -= bytes;
+                self.mem_breakdown.strings -= name.len();
             }
         }
 
@@ -665,11 +664,63 @@ impl ScoreSet {
 mod tests {
     use super::*;
     use crate::memory::gzset_mem_usage;
+    use redis_module::raw::RedisModule_MallocSize;
     use std::os::raw::c_void;
+
+    #[inline]
+    unsafe fn ms(ptr: *const c_void) -> usize {
+        if let Some(f) = RedisModule_MallocSize {
+            f(ptr as *mut _)
+        } else {
+            0
+        }
+    }
+
+    unsafe fn expected_usage(set: &ScoreSet) -> usize {
+        let mut total = ms(set as *const _ as *const _);
+        let breakdown = set.debug_mem_breakdown();
+        debug_assert_eq!(set.mem_bytes(), breakdown.structural());
+        total += breakdown.structural();
+
+        let sizes_nodes = ScoreSet::btree_nodes(set.by_score_sizes.len());
+        if sizes_nodes > 0 {
+            total +=
+                sizes_nodes * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
+        }
+
+        #[cfg(feature = "fast-hash")]
+        {
+            let table = set.pool.map.raw_table();
+            if table.capacity() > 0 {
+                let (ptr, _) = table.allocation_info();
+                total += ms(ptr.as_ptr().cast());
+                total += size_class(16 + table.buckets());
+            }
+        }
+        #[cfg(not(feature = "fast-hash"))]
+        {
+            if set.pool.map.capacity() > 0 {
+                total += size_class(16 + set.pool.map.capacity());
+            }
+        }
+
+        for key in set.pool.map.keys() {
+            total += ms(key.as_ptr().cast());
+        }
+
+        if set.pool.strings.capacity() > 0 {
+            total += ms(set.pool.strings.as_ptr() as *const _);
+        }
+        if set.pool.free_ids.capacity() > 0 {
+            total += ms(set.pool.free_ids.as_ptr() as *const _);
+        }
+
+        total
+    }
 
     #[test]
     fn mem_usage_matches_breakdown() {
-        let mut set = ScoreSet::default();
+        let mut set = Box::new(ScoreSet::default());
         for i in 0..5 {
             assert!(set.insert(0.0, &format!("m{i}")));
         }
@@ -677,10 +728,8 @@ mod tests {
             assert!(set.insert(i as f64, &format!("m{i}")));
         }
         unsafe {
-            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total()
-                + ScoreSet::btree_nodes(set.by_score_sizes.len())
-                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
+            let usage = gzset_mem_usage((&*set as *const ScoreSet) as *const c_void);
+            let breakdown = expected_usage(set.as_ref());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
@@ -689,10 +738,8 @@ mod tests {
         }
         assert!(set.remove("m0"));
         unsafe {
-            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total()
-                + ScoreSet::btree_nodes(set.by_score_sizes.len())
-                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
+            let usage = gzset_mem_usage((&*set as *const ScoreSet) as *const c_void);
+            let breakdown = expected_usage(set.as_ref());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
@@ -700,10 +747,8 @@ mod tests {
             assert!(set.remove(&format!("m{i}")));
         }
         unsafe {
-            let usage = gzset_mem_usage((&set as *const ScoreSet) as *const c_void);
-            let breakdown = set.debug_mem_breakdown().total()
-                + ScoreSet::btree_nodes(set.by_score_sizes.len())
-                    * size_class(ScoreSet::map_node_bytes::<OrderedFloat<f64>, usize>());
+            let usage = gzset_mem_usage((&*set as *const ScoreSet) as *const c_void);
+            let breakdown = expected_usage(set.as_ref());
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
@@ -711,10 +756,13 @@ mod tests {
 
     #[test]
     fn pop_updates_internal_state() {
-        let mut set = ScoreSet::default();
+        let mut set = Box::new(ScoreSet::default());
         let items = [
             (1.0, "a1"),
             (1.0, "a2"),
+            (1.0, "a3"),
+            (1.0, "a4"),
+            (1.0, "a5"),
             (2.0, "b1"),
             (2.0, "b2"),
             (3.0, "c1"),
@@ -725,6 +773,7 @@ mod tests {
         }
         let initial_len = set.len();
         let initial_mem = set.mem_bytes();
+        let initial_usage = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
 
         let popped = set.pop_n(true, 3);
         assert_eq!(popped.len(), 3);
@@ -733,14 +782,27 @@ mod tests {
             vec![
                 ("a1".to_string(), 1.0),
                 ("a2".to_string(), 1.0),
-                ("b1".to_string(), 2.0)
+                ("a3".to_string(), 1.0)
             ]
         );
         assert_eq!(set.len(), initial_len - popped.len());
         assert!(set.mem_bytes() < initial_mem);
+        let usage_after = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
+        let has_malloc = unsafe { RedisModule_MallocSize }.is_some();
+        if has_malloc {
+            assert!(
+                usage_after < initial_usage,
+                "usage {usage_after} initial {initial_usage}"
+            );
+        }
 
-        for (score, bucket) in &set.by_score {
-            let sz = set.by_score_sizes.get(score).copied().unwrap_or_default();
+        let set_ref = set.as_ref();
+        for (score, bucket) in &set_ref.by_score {
+            let sz = set_ref
+                .by_score_sizes
+                .get(score)
+                .copied()
+                .unwrap_or_default();
             assert_eq!(bucket.len(), sz, "score {score:?}");
         }
 
@@ -751,7 +813,8 @@ mod tests {
 
         while set.pop_one(true).is_some() {}
         assert!(set.is_empty());
-        assert!(set.by_score.is_empty());
-        assert!(set.by_score_sizes.is_empty());
+        let set_ref = set.as_ref();
+        assert!(set_ref.by_score.is_empty());
+        assert!(set_ref.by_score_sizes.is_empty());
     }
 }
