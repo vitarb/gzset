@@ -12,7 +12,6 @@ pub use crate::{
 };
 
 mod command;
-mod compact_table;
 mod format;
 mod memory;
 mod pool;
