@@ -2,10 +2,7 @@ use ordered_float::OrderedFloat;
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, convert::TryFrom, mem::size_of};
 
-use crate::{
-    compact_table::CompactTable,
-    pool::{MemberId, StringPool},
-};
+use crate::pool::{MemberId, StringPool};
 
 type Bucket = SmallVec<[MemberId; 4]>;
 
@@ -14,6 +11,8 @@ const BUCKET_SHRINK_THRESHOLD: usize = 4;
 
 const BTREE_NODE_CAP: usize = 11;
 const BTREE_NODE_HDR: usize = 48;
+
+const EMPTY_SCORE: f64 = f64::NAN;
 
 #[inline]
 const fn size_class(bytes: usize) -> usize {
@@ -27,7 +26,7 @@ const fn size_class(bytes: usize) -> usize {
 #[derive(Default)]
 pub struct ScoreSet {
     pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
-    pub(crate) members: CompactTable,
+    pub(crate) scores: Vec<f64>,
     pub(crate) pool: StringPool,
     mem_bytes: usize,
     #[cfg(test)]
@@ -198,14 +197,22 @@ impl ScoreSet {
     }
 
     #[inline]
-    fn member_table_bytes(table: &CompactTable) -> usize {
-        let raw = table.raw_table();
-        if raw.capacity() == 0 {
-            0
-        } else {
-            let (_, layout) = raw.allocation_info();
-            layout.size() + size_class(16 + raw.buckets())
+    fn get_score_by_id(&self, id: MemberId) -> Option<f64> {
+        let idx = id as usize;
+        if idx >= self.scores.len() {
+            return None;
         }
+        let score = self.scores[idx];
+        if score.is_nan() {
+            None
+        } else {
+            Some(score)
+        }
+    }
+
+    #[inline]
+    fn scores_bytes(scores: &Vec<f64>) -> usize {
+        scores.capacity() * size_of::<f64>()
     }
 
     #[inline]
@@ -265,75 +272,89 @@ impl ScoreSet {
     pub fn insert(&mut self, score: f64, member: &str) -> bool {
         let key = OrderedFloat(score);
         let is_new = self.pool.lookup(member).is_none();
-        let prev_table = Self::member_table_bytes(&self.members);
+        let prev_scores = Self::scores_bytes(&self.scores);
         let prev_map = Self::score_map_bytes(&self.by_score);
         let id = self.pool.intern(member);
-        let mut bucket_delta: isize = 0;
-        let inserted = {
-            let name = self.pool.get(id);
-            let old = self.members.get(id);
-            if !self.members.insert(id, score) {
-                if let Some(old_score) = old {
-                    let old_key = OrderedFloat(old_score);
-                    if old_key == key {
-                        return false;
-                    }
-                    if let Some(bucket) = self.by_score.get_mut(&old_key) {
-                        if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-                            bucket.remove(pos);
-                        }
-                        if bucket.is_empty() {
-                            self.by_score.remove(&old_key);
-                        } else {
-                            bucket_delta = Self::maybe_shrink_bucket(bucket);
-                        }
-                    }
-                }
-            }
-            let new_table = Self::member_table_bytes(&self.members);
-            self.mem_bytes += new_table - prev_table;
+        let idx = id as usize;
+        let old_score = self.get_score_by_id(id);
+        if self.scores.len() <= idx {
+            self.scores.resize(idx + 1, EMPTY_SCORE);
+        }
+        let new_scores = Self::scores_bytes(&self.scores);
+        if new_scores >= prev_scores {
+            let delta = new_scores - prev_scores;
+            self.mem_bytes += delta;
             #[cfg(test)]
             {
-                self.mem_breakdown.member_table += new_table - prev_table;
+                self.mem_breakdown.member_table += delta;
             }
-            if is_new {
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.strings += member.len();
+        } else {
+            let delta = prev_scores - new_scores;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.member_table -= delta;
+            }
+        }
+        if is_new {
+            #[cfg(test)]
+            {
+                self.mem_breakdown.strings += member.len();
+            }
+        }
+
+        let mut bucket_delta: isize = 0;
+        let name = self.pool.get(id);
+        if let Some(old_score) = old_score {
+            let old_key = OrderedFloat(old_score);
+            if old_key == key {
+                return false;
+            }
+            if let Some(bucket) = self.by_score.get_mut(&old_key) {
+                if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
+                    bucket.remove(pos);
+                }
+                if bucket.is_empty() {
+                    self.by_score.remove(&old_key);
+                } else {
+                    bucket_delta = Self::maybe_shrink_bucket(bucket);
                 }
             }
-            let bucket = self.by_score.entry(key).or_default();
-            let spilled_before = bucket.spilled();
-            match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-                Ok(_) => false,
-                Err(pos) => {
-                    bucket.insert(pos, id);
-                    if !spilled_before && bucket.spilled() {
-                        let bytes = bucket.capacity() * size_of::<MemberId>();
-                        self.mem_bytes += bytes;
-                        #[cfg(test)]
-                        {
-                            self.mem_breakdown.buckets += bytes;
-                        }
+        }
+
+        self.scores[idx] = score;
+
+        let bucket = self.by_score.entry(key).or_default();
+        let spilled_before = bucket.spilled();
+        let inserted = match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
+            Ok(_) => false,
+            Err(pos) => {
+                bucket.insert(pos, id);
+                if !spilled_before && bucket.spilled() {
+                    let bytes = bucket.capacity() * size_of::<MemberId>();
+                    self.mem_bytes += bytes;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.buckets += bytes;
                     }
-                    let new_map = Self::score_map_bytes(&self.by_score);
-                    if new_map >= prev_map {
-                        let delta = new_map - prev_map;
-                        self.mem_bytes += delta;
-                        #[cfg(test)]
-                        {
-                            self.mem_breakdown.score_map += delta;
-                        }
-                    } else {
-                        let delta = prev_map - new_map;
-                        self.mem_bytes -= delta;
-                        #[cfg(test)]
-                        {
-                            self.mem_breakdown.score_map -= delta;
-                        }
-                    }
-                    true
                 }
+                let new_map = Self::score_map_bytes(&self.by_score);
+                if new_map >= prev_map {
+                    let delta = new_map - prev_map;
+                    self.mem_bytes += delta;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.score_map += delta;
+                    }
+                } else {
+                    let delta = prev_map - new_map;
+                    self.mem_bytes -= delta;
+                    #[cfg(test)]
+                    {
+                        self.mem_breakdown.score_map -= delta;
+                    }
+                }
+                true
             }
         };
         if bucket_delta != 0 {
@@ -347,79 +368,84 @@ impl ScoreSet {
             Some(id) => id,
             None => return false,
         };
-        let score = match self.members.get(id) {
+        let score = match self.get_score_by_id(id) {
             Some(s) => OrderedFloat(s),
             None => return false,
         };
-        let prev_table = Self::member_table_bytes(&self.members);
+        let prev_scores = Self::scores_bytes(&self.scores);
         let prev_map = Self::score_map_bytes(&self.by_score);
-        if self.members.remove(id) {
-            let mut bucket_delta: isize = 0;
-            if let Some(bucket) = self.by_score.get_mut(&score) {
-                if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
-                    bucket.remove(pos);
-                }
-                if bucket.is_empty() {
-                    self.by_score.remove(&score);
-                } else {
-                    bucket_delta = Self::maybe_shrink_bucket(bucket);
-                }
+        let mut bucket_delta: isize = 0;
+        if let Some(bucket) = self.by_score.get_mut(&score) {
+            if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
+                bucket.remove(pos);
             }
-            if bucket_delta != 0 {
-                self.apply_bucket_mem_delta(bucket_delta);
-            }
-            let new_table = Self::member_table_bytes(&self.members);
-            if new_table >= prev_table {
-                let delta = new_table - prev_table;
-                self.mem_bytes += delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.member_table += delta;
-                }
+            if bucket.is_empty() {
+                self.by_score.remove(&score);
             } else {
-                let delta = prev_table - new_table;
-                self.mem_bytes -= delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.member_table -= delta;
-                }
+                bucket_delta = Self::maybe_shrink_bucket(bucket);
             }
-            let new_map = Self::score_map_bytes(&self.by_score);
-            if new_map >= prev_map {
-                let delta = new_map - prev_map;
-                self.mem_bytes += delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map += delta;
-                }
-            } else {
-                let delta = prev_map - new_map;
-                self.mem_bytes -= delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map -= delta;
-                }
-            }
-            if self.pool.remove(member).is_some() {
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.strings -= member.len();
-                }
-            }
-            true
-        } else {
-            false
         }
+        if bucket_delta != 0 {
+            self.apply_bucket_mem_delta(bucket_delta);
+        }
+
+        let idx = id as usize;
+        if idx < self.scores.len() {
+            self.scores[idx] = EMPTY_SCORE;
+        }
+
+        let new_scores = Self::scores_bytes(&self.scores);
+        if new_scores >= prev_scores {
+            let delta = new_scores - prev_scores;
+            self.mem_bytes += delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.member_table += delta;
+            }
+        } else {
+            let delta = prev_scores - new_scores;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.member_table -= delta;
+            }
+        }
+
+        let new_map = Self::score_map_bytes(&self.by_score);
+        if new_map >= prev_map {
+            let delta = new_map - prev_map;
+            self.mem_bytes += delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map += delta;
+            }
+        } else {
+            let delta = prev_map - new_map;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map -= delta;
+            }
+        }
+
+        if self.pool.remove(member).is_some() {
+            #[cfg(test)]
+            {
+                self.mem_breakdown.strings -= member.len();
+            }
+        }
+
+        true
     }
 
     pub fn score(&self, member: &str) -> Option<f64> {
         let id = self.pool.lookup(member)?;
-        self.members.get(id)
+        self.get_score_by_id(id)
     }
 
     pub fn rank(&self, member: &str) -> Option<usize> {
         let id = self.pool.lookup(member)?;
-        let score_key = OrderedFloat(self.members.get(id)?);
+        let score_key = OrderedFloat(self.get_score_by_id(id)?);
         let bucket = self.by_score.get(&score_key)?;
         let pos = bucket
             .binary_search_by(|&m| self.pool.get(m).cmp(member))
@@ -444,7 +470,7 @@ impl ScoreSet {
     }
 
     pub fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
-        let len = self.members.len() as isize;
+        let len = self.pool.len() as isize;
         if len == 0 {
             return ScoreIter::empty(&self.by_score, &self.pool);
         }
@@ -478,11 +504,11 @@ impl ScoreSet {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.members.len() == 0
+        self.pool.len() == 0
     }
 
     pub fn len(&self) -> usize {
-        self.members.len()
+        self.pool.len()
     }
 
     pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
@@ -540,24 +566,24 @@ impl ScoreSet {
 
     #[cfg(any(test, feature = "bench"))]
     pub fn member_names(&self) -> Vec<String> {
-        self.members
-            .iter()
-            .map(|(id, _)| self.pool.get(id).to_owned())
-            .collect()
+        self.pool.map.keys().map(|name| name.to_string()).collect()
     }
 
     #[cfg(any(test, feature = "bench"))]
     pub fn members_with_scores(&self) -> Vec<(String, f64)> {
-        self.members
-            .iter()
-            .map(|(id, sc)| (self.pool.get(id).to_owned(), sc))
-            .collect()
+        let mut out = Vec::new();
+        for (name, id) in &self.pool.map {
+            if let Some(score) = self.get_score_by_id(*id) {
+                out.push((name.to_string(), score));
+            }
+        }
+        out
     }
 
     pub fn contains(&self, member: &str) -> bool {
         self.pool
             .lookup(member)
-            .is_some_and(|id| self.members.get(id).is_some())
+            .is_some_and(|id| self.get_score_by_id(id).is_some())
     }
 
     pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
@@ -586,19 +612,25 @@ impl ScoreSet {
 
         self.apply_bucket_mem_delta(shrink_delta);
 
-        let prev_table = Self::member_table_bytes(&self.members);
-        let removed = self.members.remove(id);
-        debug_assert!(removed, "member removed from score map must exist in table");
-        let new_table = Self::member_table_bytes(&self.members);
-        if new_table >= prev_table {
-            let delta = new_table - prev_table;
+        let prev_scores = Self::scores_bytes(&self.scores);
+        let idx = id as usize;
+        debug_assert!(
+            self.get_score_by_id(id).is_some(),
+            "member removed from score map must exist in scores table"
+        );
+        if idx < self.scores.len() {
+            self.scores[idx] = EMPTY_SCORE;
+        }
+        let new_scores = Self::scores_bytes(&self.scores);
+        if new_scores >= prev_scores {
+            let delta = new_scores - prev_scores;
             self.mem_bytes += delta;
             #[cfg(test)]
             {
                 self.mem_breakdown.member_table += delta;
             }
         } else {
-            let delta = prev_table - new_table;
+            let delta = prev_scores - new_scores;
             self.mem_bytes -= delta;
             #[cfg(test)]
             {

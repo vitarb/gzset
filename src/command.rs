@@ -202,7 +202,7 @@ fn gzcard(_ctx: &Context, args: Vec<RedisString>) -> Result {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
-    let len = with_set_read(_ctx, key, |s| s.members.len() as i64)?;
+    let len = with_set_read(_ctx, key, |s| s.len() as i64)?;
     Ok(len.into())
 }
 
@@ -435,7 +435,7 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut keys_vec: Vec<_> = keys.clone();
-    keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.members.len()).unwrap());
+    keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.len()).unwrap());
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     with_set_read(_ctx, keys_vec[0], |s| -> rm::RedisResult<()> {
         agg.reserve(s.len());
@@ -518,8 +518,8 @@ fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
     } else {
         None
     };
-    let len1 = with_set_read(_ctx, key1, |s| s.members.len())?;
-    let len2 = with_set_read(_ctx, key2, |s| s.members.len())?;
+    let len1 = with_set_read(_ctx, key1, |s| s.len())?;
+    let len2 = with_set_read(_ctx, key2, |s| s.len())?;
     if len1 == 0 || len2 == 0 {
         return Ok(0i64.into());
     }
