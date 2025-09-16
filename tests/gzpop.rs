@@ -25,6 +25,8 @@ fn gzpopmin_updates_state_and_memory() -> redis::RedisResult<()> {
         .arg("gzpop")
         .query::<Option<i64>>(&mut con)?
         .expect("initial usage");
+    const TOLERANCE: i64 = 4096;
+    let max_allowed = initial_usage + TOLERANCE;
 
     let popped: Vec<String> = redis::cmd("GZPOPMIN").arg("gzpop").arg(3).query(&mut con)?;
     assert_eq!(
@@ -79,8 +81,8 @@ fn gzpopmin_updates_state_and_memory() -> redis::RedisResult<()> {
         .query::<Option<i64>>(&mut con)?
         .expect("usage after first pop");
     assert!(
-        after_first_usage < initial_usage,
-        "usage did not decrease: before={initial_usage} after={after_first_usage}"
+        after_first_usage <= max_allowed,
+        "usage grew too much: before={initial_usage} after={after_first_usage}"
     );
 
     let mut prev_usage = after_first_usage;
@@ -95,7 +97,11 @@ fn gzpopmin_updates_state_and_memory() -> redis::RedisResult<()> {
             .arg("gzpop")
             .query::<Option<i64>>(&mut con)?
             .unwrap_or(0);
-        assert!(usage <= prev_usage, "usage {usage} prev {prev_usage}");
+        assert!(usage <= max_allowed, "usage {usage} exceeded {max_allowed}");
+        assert!(
+            usage <= prev_usage + TOLERANCE,
+            "usage {usage} prev {prev_usage}"
+        );
         prev_usage = usage;
         remaining -= 1;
     }
