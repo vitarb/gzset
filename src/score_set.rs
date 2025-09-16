@@ -566,15 +566,15 @@ impl ScoreSet {
 
     #[cfg(any(test, feature = "bench"))]
     pub fn member_names(&self) -> Vec<String> {
-        self.pool.map.keys().map(|name| name.to_string()).collect()
+        self.pool.iter().map(|(name, _)| name.to_owned()).collect()
     }
 
     #[cfg(any(test, feature = "bench"))]
     pub fn members_with_scores(&self) -> Vec<(String, f64)> {
         let mut out = Vec::new();
-        for (name, id) in &self.pool.map {
-            if let Some(score) = self.get_score_by_id(*id) {
-                out.push((name.to_string(), score));
+        for (name, id) in self.pool.iter() {
+            if let Some(score) = self.get_score_by_id(id) {
+                out.push((name.to_owned(), score));
             }
         }
         out
@@ -698,9 +698,11 @@ impl ScoreSet {
 mod tests {
     use super::*;
     use crate::memory::gzset_mem_usage;
+    use crate::pool::Loc;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use redis_module::raw::RedisModule_MallocSize;
     use std::collections::HashSet;
+    use std::mem::size_of;
     use std::os::raw::c_void;
 
     #[inline]
@@ -718,7 +720,7 @@ mod tests {
         debug_assert_eq!(set.mem_bytes(), breakdown.structural());
         total += breakdown.structural();
 
-        let table = set.pool.map.raw_table();
+        let table = &set.pool.table;
         if table.buckets() > 0 {
             let (ptr, layout) = table.allocation_info();
             let table_bytes = ms(ptr.as_ptr().cast());
@@ -729,15 +731,19 @@ mod tests {
             }
         }
 
-        for key in set.pool.map.keys() {
-            total += ms(key.as_ptr().cast());
-        }
-
-        if set.pool.strings.capacity() > 0 {
-            total += ms(set.pool.strings.as_ptr() as *const _);
+        if set.pool.index.capacity() > 0 {
+            total += size_class(set.pool.index.capacity() * size_of::<Option<Loc>>());
         }
         if set.pool.free_ids.capacity() > 0 {
-            total += ms(set.pool.free_ids.as_ptr() as *const _);
+            total += size_class(set.pool.free_ids.capacity() * size_of::<MemberId>());
+        }
+        for chunk in &set.pool.arena {
+            let chunk_bytes = ms(chunk.as_ptr() as *const _);
+            if chunk_bytes > 0 {
+                total += chunk_bytes;
+            } else {
+                total += size_class(chunk.len());
+            }
         }
 
         total

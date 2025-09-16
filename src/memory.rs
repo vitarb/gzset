@@ -1,5 +1,6 @@
-use crate::score_set::ScoreSet;
+use crate::{pool::Loc, score_set::ScoreSet};
 use redis_module::raw::RedisModule_MallocSize;
+use std::mem::size_of;
 use std::os::raw::c_void;
 
 #[inline]
@@ -33,7 +34,7 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
     // tracked by ScoreSet::mem_bytes (buckets, member table, by_score BTreeMap)
     total += set.mem_bytes();
 
-    let table = set.pool.map.raw_table();
+    let table = &set.pool.table;
     if table.buckets() > 0 {
         let (ptr, layout) = table.allocation_info();
         let table_bytes = ms(ptr.as_ptr().cast());
@@ -43,14 +44,19 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
             total += size_class(layout.size());
         }
     }
-    for key in set.pool.map.keys() {
-        total += ms(key.as_ptr().cast());
-    }
-    if set.pool.strings.capacity() > 0 {
-        total += ms(set.pool.strings.as_ptr() as *const _);
+    if set.pool.index.capacity() > 0 {
+        total += size_class(set.pool.index.capacity() * size_of::<Option<Loc>>());
     }
     if set.pool.free_ids.capacity() > 0 {
-        total += ms(set.pool.free_ids.as_ptr() as *const _);
+        total += size_class(set.pool.free_ids.capacity() * size_of::<crate::pool::MemberId>());
+    }
+    for chunk in &set.pool.arena {
+        let chunk_bytes = ms(chunk.as_ptr() as *const _);
+        if chunk_bytes > 0 {
+            total += chunk_bytes;
+        } else {
+            total += size_class(chunk.len());
+        }
     }
 
     total
