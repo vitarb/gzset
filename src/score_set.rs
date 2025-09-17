@@ -756,12 +756,12 @@ impl ScoreSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buckets::BucketStore;
+    use crate::buckets::{Bucket, BucketStore};
     use crate::memory::gzset_mem_usage;
-    use crate::pool::Loc;
+    use crate::pool::{Loc, MemberId};
+    use ordered_float::OrderedFloat;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use redis_module::raw::RedisModule_MallocSize;
-    use smallvec::SmallVec;
     use std::collections::HashSet;
     use std::mem::size_of;
     use std::os::raw::c_void;
@@ -816,7 +816,7 @@ mod tests {
             if alloc_bytes > 0 {
                 total += alloc_bytes;
             } else {
-                let elem_size = size_of::<Option<SmallVec<[MemberId; 4]>>>();
+                let elem_size = size_of::<Option<Bucket>>();
                 total += size_class(buckets_cap * elem_size);
             }
         }
@@ -1074,9 +1074,13 @@ mod tests {
             let member = format!("m{i}");
             assert!(set.insert(1.0, &member));
         }
-        let initial_cap = set
-            .bucket_capacity_for_test(1.0)
+        let bucket_id = *set
+            .by_score
+            .get(&OrderedFloat(1.0))
             .expect("bucket should exist");
+        let initial_bytes = set.bucket_store.capacity_bytes(bucket_id);
+        assert!(initial_bytes > 0, "expected spill before pops");
+        let initial_cap = initial_bytes / size_of::<MemberId>();
         assert!(
             initial_cap > super::BUCKET_SHRINK_THRESHOLD,
             "expected spill before pops"
@@ -1101,6 +1105,21 @@ mod tests {
         assert!(
             after_buckets < before_buckets,
             "bucket breakdown should shrink: before {before_buckets} after {after_buckets}"
+        );
+        let mem_drop = before_mem - after_mem;
+        assert!(
+            mem_drop >= initial_bytes,
+            "bucket shrink should free at least initial capacity: drop {mem_drop} initial {initial_bytes}"
+        );
+        assert_eq!(
+            before_buckets - after_buckets,
+            initial_bytes,
+            "bucket breakdown should match freed bytes"
+        );
+        assert_eq!(
+            set.bucket_store.capacity_bytes(bucket_id),
+            0,
+            "bucket should be inline after shrink"
         );
         assert_eq!(after_buckets, 0, "bucket accounting should return inline");
         assert_eq!(
