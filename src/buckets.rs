@@ -57,6 +57,8 @@ impl BucketStore {
     }
 
     pub fn free_if_empty(&mut self, id: BucketId) -> (bool, isize) {
+        let buckets_len = self.buckets.len();
+        let is_last = (id as usize) + 1 == buckets_len;
         let slot = self
             .buckets
             .get_mut(id as usize)
@@ -66,6 +68,9 @@ impl BucketStore {
                 let spilled_bytes = bucket.capacity() * size_of::<MemberId>();
                 *slot = None;
                 self.free.push(id);
+                if is_last {
+                    self.drop_trailing_empty();
+                }
                 let delta = if spilled_bytes == 0 {
                     0
                 } else {
@@ -130,6 +135,7 @@ impl BucketStore {
     }
 
     pub fn take_singleton(&mut self, id: BucketId) -> (MemberId, isize) {
+        let is_last = (id as usize) + 1 == self.buckets.len();
         let slot = self
             .buckets
             .get_mut(id as usize)
@@ -144,7 +150,26 @@ impl BucketStore {
             -isize::try_from(spilled_bytes).expect("bucket spill free delta overflow")
         };
         self.free.push(id);
+        if is_last {
+            self.drop_trailing_empty();
+        }
         (member, delta)
+    }
+
+    fn drop_trailing_empty(&mut self) -> usize {
+        let old_len = self.buckets.len();
+        while matches!(self.buckets.last(), Some(None)) {
+            self.buckets.pop();
+        }
+        let new_len = self.buckets.len();
+        if new_len < old_len {
+            self.buckets.shrink_to_fit();
+            self.free.retain(|&id| (id as usize) < new_len);
+            if self.free.len() * 4 < self.free.capacity() {
+                self.free.shrink_to_fit();
+            }
+        }
+        new_len
     }
 
     pub fn maybe_shrink(&mut self, id: BucketId, threshold: usize) -> isize {
