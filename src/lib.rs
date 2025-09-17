@@ -11,6 +11,7 @@ pub use crate::{
     score_set::{ScoreIter, ScoreSet},
 };
 
+mod buckets;
 mod command;
 mod format;
 mod memory;

@@ -1,5 +1,6 @@
-use crate::{pool::Loc, score_set::ScoreSet};
+use crate::{buckets::BucketStore, pool::Loc, pool::MemberId, score_set::ScoreSet};
 use redis_module::raw::RedisModule_MallocSize;
+use smallvec::SmallVec;
 use std::mem::size_of;
 use std::os::raw::c_void;
 
@@ -56,6 +57,32 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
             total += chunk_bytes;
         } else {
             total += size_class(chunk.len());
+        }
+    }
+
+    // BucketStore containers (not the spilled capacity; that's in set.mem_bytes()).
+    let bs: &BucketStore = &set.bucket_store;
+
+    let buckets_cap = bs.buckets.capacity();
+    if buckets_cap > 0 {
+        let ptr = bs.buckets.as_ptr() as *const c_void;
+        let alloc_bytes = ms(ptr);
+        if alloc_bytes > 0 {
+            total += alloc_bytes;
+        } else {
+            let elem_size = size_of::<Option<SmallVec<[MemberId; 4]>>>();
+            total += size_class(buckets_cap * elem_size);
+        }
+    }
+
+    let free_cap = bs.free.capacity();
+    if free_cap > 0 {
+        let ptr = bs.free.as_ptr() as *const c_void;
+        let alloc_bytes = ms(ptr);
+        if alloc_bytes > 0 {
+            total += alloc_bytes;
+        } else {
+            total += size_class(free_cap * size_of::<crate::buckets::BucketId>());
         }
     }
 
