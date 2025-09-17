@@ -1,6 +1,9 @@
-use crate::{buckets::BucketStore, pool::Loc, pool::MemberId, score_set::ScoreSet};
+use crate::{
+    buckets::{Bucket, BucketStore},
+    pool::Loc,
+    score_set::ScoreSet,
+};
 use redis_module::raw::RedisModule_MallocSize;
-use smallvec::SmallVec;
 use std::mem::size_of;
 use std::os::raw::c_void;
 
@@ -70,7 +73,7 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
         if alloc_bytes > 0 {
             total += alloc_bytes;
         } else {
-            let elem_size = size_of::<Option<SmallVec<[MemberId; 4]>>>();
+            let elem_size = size_of::<Option<Bucket>>();
             total += size_class(buckets_cap * elem_size);
         }
     }
