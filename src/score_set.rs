@@ -1,10 +1,11 @@
 use ordered_float::OrderedFloat;
-use smallvec::SmallVec;
-use std::{collections::BTreeMap, convert::TryFrom, mem::size_of};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    mem::size_of,
+};
 
+use crate::buckets::{BucketId, BucketStore};
 use crate::pool::{MemberId, StringPool};
-
-type Bucket = SmallVec<[MemberId; 4]>;
 
 /// Buckets shrink back to inline storage once they contain at most this many members.
 const BUCKET_SHRINK_THRESHOLD: usize = 4;
@@ -23,14 +24,28 @@ const fn size_class(bytes: usize) -> usize {
     }
 }
 
-#[derive(Default)]
 pub struct ScoreSet {
-    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, Bucket>,
+    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, BucketId>,
+    pub(crate) bucket_store: BucketStore,
     pub(crate) scores: Vec<f64>,
     pub(crate) pool: StringPool,
     mem_bytes: usize,
     #[cfg(test)]
     mem_breakdown: MemBreakdown,
+}
+
+impl Default for ScoreSet {
+    fn default() -> Self {
+        Self {
+            by_score: BTreeMap::new(),
+            bucket_store: BucketStore::new(),
+            scores: Vec::new(),
+            pool: StringPool::default(),
+            mem_bytes: 0,
+            #[cfg(test)]
+            mem_breakdown: MemBreakdown::default(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -58,9 +73,10 @@ impl MemBreakdown {
 #[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
     pool: &'a StringPool,
-    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, Bucket>,
+    store: &'a BucketStore,
+    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketId>,
     front_current: Option<(std::slice::Iter<'a, MemberId>, OrderedFloat<f64>)>,
-    back_outer: std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, Bucket>>,
+    back_outer: std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketId>>,
     back_current: Option<(
         std::iter::Rev<std::slice::Iter<'a, MemberId>>,
         OrderedFloat<f64>,
@@ -74,7 +90,8 @@ pub struct ScoreIter<'a> {
 
 impl<'a> ScoreIter<'a> {
     fn new(
-        map: &'a BTreeMap<OrderedFloat<f64>, Bucket>,
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketId>,
+        store: &'a BucketStore,
         pool: &'a StringPool,
         start: usize,
         stop: usize,
@@ -82,6 +99,7 @@ impl<'a> ScoreIter<'a> {
     ) -> Self {
         Self {
             pool,
+            store,
             front_outer: map.iter(),
             front_current: None,
             back_outer: map.iter().rev(),
@@ -94,9 +112,14 @@ impl<'a> ScoreIter<'a> {
         }
     }
 
-    fn empty(map: &'a BTreeMap<OrderedFloat<f64>, Bucket>, pool: &'a StringPool) -> Self {
+    fn empty(
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketId>,
+        store: &'a BucketStore,
+        pool: &'a StringPool,
+    ) -> Self {
         Self {
             pool,
+            store,
             front_outer: map.iter(),
             front_current: None,
             back_outer: map.iter().rev(),
@@ -136,8 +159,9 @@ impl<'a> Iterator for ScoreIter<'a> {
                 self.front_current = None;
             }
             match self.front_outer.next() {
-                Some((score, bucket)) => {
-                    self.front_current = Some((bucket.iter(), *score));
+                Some((score, bucket_id)) => {
+                    let slice = self.store.slice(*bucket_id);
+                    self.front_current = Some((slice.iter(), *score));
                 }
                 None => return None,
             }
@@ -169,8 +193,9 @@ impl<'a> DoubleEndedIterator for ScoreIter<'a> {
                 self.back_current = None;
             }
             match self.back_outer.next() {
-                Some((score, bucket)) => {
-                    self.back_current = Some((bucket.iter().rev(), *score));
+                Some((score, bucket_id)) => {
+                    let slice = self.store.slice(*bucket_id);
+                    self.back_current = Some((slice.iter().rev(), *score));
                 }
                 None => return None,
             }
@@ -216,12 +241,12 @@ impl ScoreSet {
     }
 
     #[inline]
-    fn score_map_bytes(map: &BTreeMap<OrderedFloat<f64>, Bucket>) -> usize {
+    fn score_map_bytes(map: &BTreeMap<OrderedFloat<f64>, BucketId>) -> usize {
         if map.is_empty() {
             0
         } else {
             Self::btree_nodes(map.len())
-                * size_class(Self::map_node_bytes::<OrderedFloat<f64>, Bucket>())
+                * size_class(Self::map_node_bytes::<OrderedFloat<f64>, BucketId>())
         }
     }
 
@@ -233,18 +258,6 @@ impl ScoreSet {
     #[inline]
     fn map_node_bytes<K, V>() -> usize {
         BTREE_NODE_HDR + BTREE_NODE_CAP * (size_of::<K>() + size_of::<V>())
-    }
-
-    #[inline]
-    fn maybe_shrink_bucket(bucket: &mut Bucket) -> isize {
-        if bucket.spilled() && bucket.len() <= BUCKET_SHRINK_THRESHOLD {
-            let bytes = bucket.capacity() * size_of::<MemberId>();
-            bucket.shrink_to_fit();
-            let bytes = isize::try_from(bytes).expect("bucket shrink delta overflow");
-            -bytes
-        } else {
-            0
-        }
     }
 
     #[inline]
@@ -310,53 +323,58 @@ impl ScoreSet {
             if old_key == key {
                 return false;
             }
-            if let Some(bucket) = self.by_score.get_mut(&old_key) {
-                if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-                    bucket.remove(pos);
-                }
-                if bucket.is_empty() {
-                    self.by_score.remove(&old_key);
-                } else {
-                    bucket_delta = Self::maybe_shrink_bucket(bucket);
+            if let Some(&bucket_id) = self.by_score.get(&old_key) {
+                let (removed, delta, now_empty) =
+                    self.bucket_store
+                        .remove_by_name(bucket_id, name, |m| self.pool.get(m));
+                if removed {
+                    bucket_delta += delta;
+                    if now_empty {
+                        let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
+                        debug_assert!(freed, "empty bucket must be freed");
+                        bucket_delta += free_delta;
+                        self.by_score.remove(&old_key);
+                    } else {
+                        bucket_delta += self
+                            .bucket_store
+                            .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                    }
                 }
             }
         }
 
         self.scores[idx] = score;
 
-        let bucket = self.by_score.entry(key).or_default();
-        let spilled_before = bucket.spilled();
-        let inserted = match bucket.binary_search_by(|&m| self.pool.get(m).cmp(name)) {
-            Ok(_) => false,
-            Err(pos) => {
-                bucket.insert(pos, id);
-                if !spilled_before && bucket.spilled() {
-                    let bytes = bucket.capacity() * size_of::<MemberId>();
-                    self.mem_bytes += bytes;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.buckets += bytes;
-                    }
-                }
-                let new_map = Self::score_map_bytes(&self.by_score);
-                if new_map >= prev_map {
-                    let delta = new_map - prev_map;
-                    self.mem_bytes += delta;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.score_map += delta;
-                    }
-                } else {
-                    let delta = prev_map - new_map;
-                    self.mem_bytes -= delta;
-                    #[cfg(test)]
-                    {
-                        self.mem_breakdown.score_map -= delta;
-                    }
-                }
-                true
+        let bucket_id = match self.by_score.entry(key) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let new_id = self.bucket_store.alloc();
+                entry.insert(new_id);
+                new_id
             }
         };
+        let (inserted, delta, _spilled_before, _spilled_after, _pos) = self
+            .bucket_store
+            .insert_sorted(bucket_id, id, |m| self.pool.get(m));
+        bucket_delta += delta;
+        if inserted {
+            let new_map = Self::score_map_bytes(&self.by_score);
+            if new_map >= prev_map {
+                let delta = new_map - prev_map;
+                self.mem_bytes += delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.score_map += delta;
+                }
+            } else {
+                let delta = prev_map - new_map;
+                self.mem_bytes -= delta;
+                #[cfg(test)]
+                {
+                    self.mem_breakdown.score_map -= delta;
+                }
+            }
+        }
         if bucket_delta != 0 {
             self.apply_bucket_mem_delta(bucket_delta);
         }
@@ -375,14 +393,23 @@ impl ScoreSet {
         let prev_scores = Self::scores_bytes(&self.scores);
         let prev_map = Self::score_map_bytes(&self.by_score);
         let mut bucket_delta: isize = 0;
-        if let Some(bucket) = self.by_score.get_mut(&score) {
-            if let Ok(pos) = bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
-                bucket.remove(pos);
-            }
-            if bucket.is_empty() {
-                self.by_score.remove(&score);
-            } else {
-                bucket_delta = Self::maybe_shrink_bucket(bucket);
+        if let Some(&bucket_id) = self.by_score.get(&score) {
+            let (removed, delta, now_empty) =
+                self.bucket_store
+                    .remove_by_name(bucket_id, member, |m| self.pool.get(m));
+            debug_assert!(removed, "member must exist in bucket when removing");
+            bucket_delta += delta;
+            if removed {
+                if now_empty {
+                    let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
+                    debug_assert!(freed, "empty bucket must be freed");
+                    bucket_delta += free_delta;
+                    self.by_score.remove(&score);
+                } else {
+                    bucket_delta += self
+                        .bucket_store
+                        .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                }
             }
         }
         if bucket_delta != 0 {
@@ -446,20 +473,22 @@ impl ScoreSet {
     pub fn rank(&self, member: &str) -> Option<usize> {
         let id = self.pool.lookup(member)?;
         let score_key = OrderedFloat(self.get_score_by_id(id)?);
-        let bucket = self.by_score.get(&score_key)?;
+        let bucket_id = *self.by_score.get(&score_key)?;
+        let bucket = self.bucket_store.slice(bucket_id);
         let pos = bucket
             .binary_search_by(|&m| self.pool.get(m).cmp(member))
             .ok()?;
         let prefix = self
             .by_score
             .range(..score_key)
-            .map(|(_, bucket)| bucket.len())
+            .map(|(_, id)| self.bucket_store.len(*id))
             .sum::<usize>();
         Some(prefix + pos)
     }
 
     pub fn select_by_rank(&self, mut r: usize) -> (&str, f64) {
-        for (score, bucket) in &self.by_score {
+        for (score, bucket_id) in &self.by_score {
+            let bucket = self.bucket_store.slice(*bucket_id);
             if r < bucket.len() {
                 let id = bucket[r];
                 return (self.pool.get(id), score.0);
@@ -472,7 +501,7 @@ impl ScoreSet {
     pub fn iter_range(&self, start: isize, stop: isize) -> ScoreIter<'_> {
         let len = self.pool.len() as isize;
         if len == 0 {
-            return ScoreIter::empty(&self.by_score, &self.pool);
+            return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
         }
         let mut start = if start < 0 { len + start } else { start };
         let mut stop = if stop < 0 { len + stop } else { stop };
@@ -480,16 +509,17 @@ impl ScoreSet {
             start = 0;
         }
         if stop < 0 {
-            return ScoreIter::empty(&self.by_score, &self.pool);
+            return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
         }
         if stop >= len {
             stop = len - 1;
         }
         if start > stop {
-            return ScoreIter::empty(&self.by_score, &self.pool);
+            return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
         }
         ScoreIter::new(
             &self.by_score,
+            &self.bucket_store,
             &self.pool,
             start as usize,
             stop as usize,
@@ -513,9 +543,11 @@ impl ScoreSet {
 
     pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
         let pool = &self.pool;
-        self.by_score
-            .iter()
-            .flat_map(move |(score, bucket)| bucket.iter().map(move |id| (pool.get(*id), score.0)))
+        let store = &self.bucket_store;
+        self.by_score.iter().flat_map(move |(score, bucket_id)| {
+            let slice = store.slice(*bucket_id);
+            slice.iter().map(move |id| (pool.get(*id), score.0))
+        })
     }
 
     pub fn iter_from<'a>(
@@ -526,37 +558,42 @@ impl ScoreSet {
     ) -> impl Iterator<Item = (&'a str, f64)> + 'a {
         use std::cell::Cell;
         let pool = &self.pool;
+        let store = &self.bucket_store;
         let first = Cell::new(true);
-        self.by_score.range(score..).flat_map(move |(s, bucket)| {
-            let start_idx = if first.get() {
-                first.set(false);
-                if *s == score {
-                    match bucket.binary_search_by(|&m| pool.get(m).cmp(member)) {
-                        Ok(pos) => {
-                            if exclusive {
-                                pos + 1
-                            } else {
-                                pos
+        self.by_score
+            .range(score..)
+            .flat_map(move |(s, bucket_id)| {
+                let bucket = store.slice(*bucket_id);
+                let start_idx = if first.get() {
+                    first.set(false);
+                    if *s == score {
+                        match bucket.binary_search_by(|&m| pool.get(m).cmp(member)) {
+                            Ok(pos) => {
+                                if exclusive {
+                                    pos + 1
+                                } else {
+                                    pos
+                                }
                             }
+                            Err(pos) => pos,
                         }
-                        Err(pos) => pos,
+                    } else {
+                        0
                     }
                 } else {
                     0
-                }
-            } else {
-                0
-            };
-            bucket[start_idx..]
-                .iter()
-                .map(move |id| (pool.get(*id), s.0))
-        })
+                };
+                bucket[start_idx..]
+                    .iter()
+                    .map(move |id| (pool.get(*id), s.0))
+            })
     }
 
     #[cfg(any(test, feature = "bench"))]
     pub fn all_items(&self) -> Vec<(f64, String)> {
         let mut out = Vec::new();
-        for (score, bucket) in &self.by_score {
+        for (score, bucket_id) in &self.by_score {
+            let bucket = self.bucket_store.slice(*bucket_id);
             for id in bucket {
                 out.push((score.0, self.pool.get(*id).to_owned()));
             }
@@ -588,35 +625,52 @@ impl ScoreSet {
 
     pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
         let prev_map = Self::score_map_bytes(&self.by_score);
-        let (score_key, id, shrink_delta) = {
-            let mut entry = if min {
-                self.by_score.first_entry()?
-            } else {
-                self.by_score.last_entry()?
-            };
-            let score_key = *entry.key();
-            let bucket = entry.get_mut();
-            let id = if min {
-                bucket.remove(0)
-            } else {
-                bucket.pop().expect("bucket must contain member")
-            };
-            let shrink_delta = if bucket.is_empty() {
-                entry.remove_entry();
-                0
-            } else {
-                Self::maybe_shrink_bucket(bucket)
-            };
-            (score_key, id, shrink_delta)
+        let (score_key, bucket_id) = if min {
+            let (score, bucket_id) = self.by_score.first_key_value()?;
+            (*score, *bucket_id)
+        } else {
+            let (score, bucket_id) = self.by_score.last_key_value()?;
+            (*score, *bucket_id)
         };
-
-        self.apply_bucket_mem_delta(shrink_delta);
+        let member_id = {
+            let bucket = self.bucket_store.slice(bucket_id);
+            debug_assert!(
+                !bucket.is_empty(),
+                "bucket associated with score must contain members",
+            );
+            if min {
+                bucket[0]
+            } else {
+                *bucket.last().expect("bucket must contain member")
+            }
+        };
+        let member_name = self.pool.get(member_id).to_owned();
+        let (removed, delta_remove, now_empty) =
+            self.bucket_store
+                .remove_by_name(bucket_id, &member_name, |m| self.pool.get(m));
+        debug_assert!(removed, "member must exist in bucket when popping");
+        let mut bucket_delta = delta_remove;
+        if removed {
+            if now_empty {
+                let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
+                debug_assert!(freed, "empty bucket must be freed");
+                bucket_delta += free_delta;
+                self.by_score.remove(&score_key);
+            } else {
+                bucket_delta += self
+                    .bucket_store
+                    .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+            }
+        }
+        if bucket_delta != 0 {
+            self.apply_bucket_mem_delta(bucket_delta);
+        }
 
         let prev_scores = Self::scores_bytes(&self.scores);
-        let idx = id as usize;
+        let idx = member_id as usize;
         debug_assert!(
-            self.get_score_by_id(id).is_some(),
-            "member removed from score map must exist in scores table"
+            self.get_score_by_id(member_id).is_some(),
+            "member removed from score map must exist in scores table",
         );
         if idx < self.scores.len() {
             self.scores[idx] = EMPTY_SCORE;
@@ -638,7 +692,7 @@ impl ScoreSet {
             }
         }
 
-        let name = self.pool.get(id).to_owned();
+        let name = member_name;
         if self.pool.remove(&name).is_some() {
             #[cfg(test)]
             {
@@ -679,9 +733,14 @@ impl ScoreSet {
 
     #[doc(hidden)]
     pub fn bucket_capacity_for_test(&self, score: f64) -> Option<usize> {
-        self.by_score
-            .get(&OrderedFloat(score))
-            .map(|b| b.capacity())
+        self.by_score.get(&OrderedFloat(score)).map(|&id| {
+            let bytes = self.bucket_store.capacity_bytes(id);
+            if bytes == 0 {
+                BUCKET_SHRINK_THRESHOLD
+            } else {
+                bytes / size_of::<MemberId>()
+            }
+        })
     }
 
     #[cfg(any(test, feature = "bench"))]
@@ -697,10 +756,12 @@ impl ScoreSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::buckets::BucketStore;
     use crate::memory::gzset_mem_usage;
     use crate::pool::Loc;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use redis_module::raw::RedisModule_MallocSize;
+    use smallvec::SmallVec;
     use std::collections::HashSet;
     use std::mem::size_of;
     use std::os::raw::c_void;
@@ -746,13 +807,39 @@ mod tests {
             }
         }
 
+        let bs: &BucketStore = &set.bucket_store;
+
+        let buckets_cap = bs.buckets.capacity();
+        if buckets_cap > 0 {
+            let ptr = bs.buckets.as_ptr() as *const c_void;
+            let alloc_bytes = ms(ptr);
+            if alloc_bytes > 0 {
+                total += alloc_bytes;
+            } else {
+                let elem_size = size_of::<Option<SmallVec<[MemberId; 4]>>>();
+                total += size_class(buckets_cap * elem_size);
+            }
+        }
+
+        let free_cap = bs.free.capacity();
+        if free_cap > 0 {
+            let ptr = bs.free.as_ptr() as *const c_void;
+            let alloc_bytes = ms(ptr);
+            if alloc_bytes > 0 {
+                total += alloc_bytes;
+            } else {
+                total += size_class(free_cap * size_of::<crate::buckets::BucketId>());
+            }
+        }
+
         total
     }
 
     fn assert_rank_matches(set: &ScoreSet, seed: u64, round: usize, stage: &str) {
         let mut expected_rank = 0usize;
         let mut iter_total = 0usize;
-        for (score, bucket) in &set.by_score {
+        for (score, bucket_id) in &set.by_score {
+            let bucket = set.bucket_store.slice(*bucket_id);
             assert!(
                 !bucket.is_empty(),
                 "seed {seed} round {round} stage {stage} score {score:?} has empty bucket",
@@ -959,7 +1046,8 @@ mod tests {
 
         let set_ref = set.as_ref();
         let mut total_members = 0usize;
-        for (score, bucket) in &set_ref.by_score {
+        for (score, bucket_id) in &set_ref.by_score {
+            let bucket = set_ref.bucket_store.slice(*bucket_id);
             assert!(
                 !bucket.is_empty(),
                 "score {score:?} should not have empty bucket",
