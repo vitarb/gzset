@@ -4,10 +4,10 @@ use std::{
     mem::size_of,
 };
 
-use crate::buckets::{BucketId, BucketStore};
+use crate::buckets::{BucketRef, BucketStore};
 use crate::pool::{MemberId, StringPool};
 
-/// Buckets shrink back to inline storage once they contain at most this many members.
+/// Buckets trim their heap capacity once they contain at most this many members.
 const BUCKET_SHRINK_THRESHOLD: usize = 4;
 
 const BTREE_NODE_CAP: usize = 11;
@@ -25,7 +25,7 @@ const fn size_class(bytes: usize) -> usize {
 }
 
 pub struct ScoreSet {
-    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, BucketId>,
+    pub(crate) by_score: BTreeMap<OrderedFloat<f64>, BucketRef>,
     pub(crate) bucket_store: BucketStore,
     pub(crate) scores: Vec<f64>,
     pub(crate) pool: StringPool,
@@ -71,16 +71,58 @@ impl MemBreakdown {
 }
 
 #[derive(Clone, Debug)]
+struct InlineIter {
+    value: Option<MemberId>,
+}
+
+impl InlineIter {
+    fn new(id: MemberId) -> Self {
+        Self { value: Some(id) }
+    }
+
+    fn next(&mut self) -> Option<MemberId> {
+        self.value.take()
+    }
+}
+
+#[derive(Clone, Debug)]
+enum FrontState<'a> {
+    Slice(std::slice::Iter<'a, MemberId>),
+    Inline(InlineIter),
+}
+
+impl<'a> FrontState<'a> {
+    fn next(&mut self) -> Option<MemberId> {
+        match self {
+            Self::Slice(iter) => iter.next().copied(),
+            Self::Inline(inline) => inline.next(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum BackState<'a> {
+    Slice(std::iter::Rev<std::slice::Iter<'a, MemberId>>),
+    Inline(InlineIter),
+}
+
+impl<'a> BackState<'a> {
+    fn next(&mut self) -> Option<MemberId> {
+        match self {
+            Self::Slice(iter) => iter.next().copied(),
+            Self::Inline(inline) => inline.next(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
     pool: &'a StringPool,
     store: &'a BucketStore,
-    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketId>,
-    front_current: Option<(std::slice::Iter<'a, MemberId>, OrderedFloat<f64>)>,
-    back_outer: std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketId>>,
-    back_current: Option<(
-        std::iter::Rev<std::slice::Iter<'a, MemberId>>,
-        OrderedFloat<f64>,
-    )>,
+    front_outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketRef>,
+    front_current: Option<(FrontState<'a>, OrderedFloat<f64>)>,
+    back_outer: std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketRef>>,
+    back_current: Option<(BackState<'a>, OrderedFloat<f64>)>,
     remaining_front_skip: usize,
     remaining_back_skip: usize,
     yielded_front: usize,
@@ -90,7 +132,7 @@ pub struct ScoreIter<'a> {
 
 impl<'a> ScoreIter<'a> {
     fn new(
-        map: &'a BTreeMap<OrderedFloat<f64>, BucketId>,
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
         store: &'a BucketStore,
         pool: &'a StringPool,
         start: usize,
@@ -113,7 +155,7 @@ impl<'a> ScoreIter<'a> {
     }
 
     fn empty(
-        map: &'a BTreeMap<OrderedFloat<f64>, BucketId>,
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
         store: &'a BucketStore,
         pool: &'a StringPool,
     ) -> Self {
@@ -146,22 +188,28 @@ impl<'a> Iterator for ScoreIter<'a> {
             return None;
         }
         loop {
-            if let Some((ref mut iter, score)) = self.front_current {
-                for id in iter.by_ref() {
+            if let Some((ref mut state, score)) = self.front_current {
+                while let Some(id) = state.next() {
                     if self.remaining_front_skip > 0 {
                         self.remaining_front_skip -= 1;
                         continue;
                     }
                     self.yielded_front += 1;
-                    let member = self.pool.get(*id);
+                    let member = self.pool.get(id);
                     return Some((member, score.0));
                 }
                 self.front_current = None;
             }
             match self.front_outer.next() {
-                Some((score, bucket_id)) => {
-                    let slice = self.store.slice(*bucket_id);
-                    self.front_current = Some((slice.iter(), *score));
+                Some((score, bucket_ref)) => {
+                    let state = match *bucket_ref {
+                        BucketRef::Inline1(member) => FrontState::Inline(InlineIter::new(member)),
+                        BucketRef::Handle(bucket_id) => {
+                            let slice = self.store.slice(bucket_id);
+                            FrontState::Slice(slice.iter())
+                        }
+                    };
+                    self.front_current = Some((state, *score));
                 }
                 None => return None,
             }
@@ -180,22 +228,28 @@ impl<'a> DoubleEndedIterator for ScoreIter<'a> {
             return None;
         }
         loop {
-            if let Some((ref mut iter, score)) = self.back_current {
-                for id in iter.by_ref() {
+            if let Some((ref mut state, score)) = self.back_current {
+                while let Some(id) = state.next() {
                     if self.remaining_back_skip > 0 {
                         self.remaining_back_skip -= 1;
                         continue;
                     }
                     self.yielded_back += 1;
-                    let member = self.pool.get(*id);
+                    let member = self.pool.get(id);
                     return Some((member, score.0));
                 }
                 self.back_current = None;
             }
             match self.back_outer.next() {
-                Some((score, bucket_id)) => {
-                    let slice = self.store.slice(*bucket_id);
-                    self.back_current = Some((slice.iter().rev(), *score));
+                Some((score, bucket_ref)) => {
+                    let state = match *bucket_ref {
+                        BucketRef::Inline1(member) => BackState::Inline(InlineIter::new(member)),
+                        BucketRef::Handle(bucket_id) => {
+                            let slice = self.store.slice(bucket_id);
+                            BackState::Slice(slice.iter().rev())
+                        }
+                    };
+                    self.back_current = Some((state, *score));
                 }
                 None => return None,
             }
@@ -241,12 +295,12 @@ impl ScoreSet {
     }
 
     #[inline]
-    fn score_map_bytes(map: &BTreeMap<OrderedFloat<f64>, BucketId>) -> usize {
+    fn score_map_bytes(map: &BTreeMap<OrderedFloat<f64>, BucketRef>) -> usize {
         if map.is_empty() {
             0
         } else {
             Self::btree_nodes(map.len())
-                * size_class(Self::map_node_bytes::<OrderedFloat<f64>, BucketId>())
+                * size_class(Self::map_node_bytes::<OrderedFloat<f64>, BucketRef>())
         }
     }
 
@@ -323,21 +377,38 @@ impl ScoreSet {
             if old_key == key {
                 return false;
             }
-            if let Some(&bucket_id) = self.by_score.get(&old_key) {
-                let (removed, delta, now_empty) =
-                    self.bucket_store
-                        .remove_by_name(bucket_id, name, |m| self.pool.get(m));
-                if removed {
-                    bucket_delta += delta;
-                    if now_empty {
-                        let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
-                        debug_assert!(freed, "empty bucket must be freed");
-                        bucket_delta += free_delta;
+            if let Some(bucket_ref) = self.by_score.get(&old_key).copied() {
+                match bucket_ref {
+                    BucketRef::Inline1(existing) => {
+                        debug_assert_eq!(
+                            existing, id,
+                            "inline bucket must contain relocating member",
+                        );
                         self.by_score.remove(&old_key);
-                    } else {
-                        bucket_delta += self
-                            .bucket_store
-                            .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                    }
+                    BucketRef::Handle(bucket_id) => {
+                        let (removed, delta, now_empty) =
+                            self.bucket_store
+                                .remove_by_name(bucket_id, name, |m| self.pool.get(m));
+                        if removed {
+                            bucket_delta += delta;
+                            if now_empty {
+                                let (freed, free_delta) =
+                                    self.bucket_store.free_if_empty(bucket_id);
+                                debug_assert!(freed, "empty bucket must be freed");
+                                bucket_delta += free_delta;
+                                self.by_score.remove(&old_key);
+                            } else if self.bucket_store.len(bucket_id) == 1 {
+                                let (remaining, delta_single) =
+                                    self.bucket_store.take_singleton(bucket_id);
+                                bucket_delta += delta_single;
+                                self.by_score.insert(old_key, BucketRef::Inline1(remaining));
+                            } else {
+                                bucket_delta += self
+                                    .bucket_store
+                                    .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                            }
+                        }
                     }
                 }
             }
@@ -345,18 +416,35 @@ impl ScoreSet {
 
         self.scores[idx] = score;
 
-        let bucket_id = match self.by_score.entry(key) {
-            Entry::Occupied(entry) => *entry.get(),
+        let inserted = match self.by_score.entry(key) {
+            Entry::Occupied(mut entry) => match *entry.get() {
+                BucketRef::Inline1(existing_id) => {
+                    let bucket_id = self.bucket_store.alloc();
+                    let (_, delta_existing, _spilled_before, _spilled_after, _pos) = self
+                        .bucket_store
+                        .insert_sorted(bucket_id, existing_id, |m| self.pool.get(m));
+                    bucket_delta += delta_existing;
+                    let (did_insert, delta_new, _sb, _sa, _p) =
+                        self.bucket_store
+                            .insert_sorted(bucket_id, id, |m| self.pool.get(m));
+                    bucket_delta += delta_new;
+                    entry.insert(BucketRef::Handle(bucket_id));
+                    did_insert
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let (did_insert, delta, _spilled_before, _spilled_after, _pos) = self
+                        .bucket_store
+                        .insert_sorted(bucket_id, id, |m| self.pool.get(m));
+                    bucket_delta += delta;
+                    did_insert
+                }
+            },
             Entry::Vacant(entry) => {
-                let new_id = self.bucket_store.alloc();
-                entry.insert(new_id);
-                new_id
+                entry.insert(BucketRef::Inline1(id));
+                true
             }
         };
-        let (inserted, delta, _spilled_before, _spilled_after, _pos) = self
-            .bucket_store
-            .insert_sorted(bucket_id, id, |m| self.pool.get(m));
-        bucket_delta += delta;
+
         if inserted {
             let new_map = Self::score_map_bytes(&self.by_score);
             if new_map >= prev_map {
@@ -393,24 +481,38 @@ impl ScoreSet {
         let prev_scores = Self::scores_bytes(&self.scores);
         let prev_map = Self::score_map_bytes(&self.by_score);
         let mut bucket_delta: isize = 0;
-        if let Some(&bucket_id) = self.by_score.get(&score) {
-            let (removed, delta, now_empty) =
-                self.bucket_store
-                    .remove_by_name(bucket_id, member, |m| self.pool.get(m));
-            debug_assert!(removed, "member must exist in bucket when removing");
-            bucket_delta += delta;
-            if removed {
-                if now_empty {
-                    let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
-                    debug_assert!(freed, "empty bucket must be freed");
-                    bucket_delta += free_delta;
-                    self.by_score.remove(&score);
-                } else {
-                    bucket_delta += self
-                        .bucket_store
-                        .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+        match self.by_score.entry(score) {
+            Entry::Occupied(mut entry) => match *entry.get() {
+                BucketRef::Inline1(mid) => {
+                    debug_assert_eq!(mid, id, "inline bucket must contain member when removing");
+                    entry.remove();
                 }
-            }
+                BucketRef::Handle(bucket_id) => {
+                    let (removed, delta, now_empty) =
+                        self.bucket_store
+                            .remove_by_name(bucket_id, member, |m| self.pool.get(m));
+                    debug_assert!(removed, "member must exist in bucket when removing");
+                    bucket_delta += delta;
+                    if removed {
+                        if now_empty {
+                            let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
+                            debug_assert!(freed, "empty bucket must be freed");
+                            bucket_delta += free_delta;
+                            entry.remove();
+                        } else if self.bucket_store.len(bucket_id) == 1 {
+                            let (remaining, delta_single) =
+                                self.bucket_store.take_singleton(bucket_id);
+                            bucket_delta += delta_single;
+                            entry.insert(BucketRef::Inline1(remaining));
+                        } else {
+                            bucket_delta += self
+                                .bucket_store
+                                .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                        }
+                    }
+                }
+            },
+            Entry::Vacant(_) => return false,
         }
         if bucket_delta != 0 {
             self.apply_bucket_mem_delta(bucket_delta);
@@ -473,27 +575,50 @@ impl ScoreSet {
     pub fn rank(&self, member: &str) -> Option<usize> {
         let id = self.pool.lookup(member)?;
         let score_key = OrderedFloat(self.get_score_by_id(id)?);
-        let bucket_id = *self.by_score.get(&score_key)?;
-        let bucket = self.bucket_store.slice(bucket_id);
-        let pos = bucket
-            .binary_search_by(|&m| self.pool.get(m).cmp(member))
-            .ok()?;
+        let bucket_ref = *self.by_score.get(&score_key)?;
+        let pos = match bucket_ref {
+            BucketRef::Inline1(mid) => {
+                if mid == id {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            BucketRef::Handle(bucket_id) => self
+                .bucket_store
+                .slice(bucket_id)
+                .binary_search_by(|&m| self.pool.get(m).cmp(member))
+                .ok(),
+        }?;
         let prefix = self
             .by_score
             .range(..score_key)
-            .map(|(_, id)| self.bucket_store.len(*id))
+            .map(|(_, bref)| match *bref {
+                BucketRef::Inline1(_) => 1,
+                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
+            })
             .sum::<usize>();
         Some(prefix + pos)
     }
 
     pub fn select_by_rank(&self, mut r: usize) -> (&str, f64) {
-        for (score, bucket_id) in &self.by_score {
-            let bucket = self.bucket_store.slice(*bucket_id);
-            if r < bucket.len() {
-                let id = bucket[r];
-                return (self.pool.get(id), score.0);
+        for (score, bucket_ref) in &self.by_score {
+            match *bucket_ref {
+                BucketRef::Inline1(mid) => {
+                    if r == 0 {
+                        return (self.pool.get(mid), score.0);
+                    }
+                    r -= 1;
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let bucket = self.bucket_store.slice(bucket_id);
+                    if r < bucket.len() {
+                        let id = bucket[r];
+                        return (self.pool.get(id), score.0);
+                    }
+                    r -= bucket.len();
+                }
             }
-            r -= bucket.len();
         }
         unreachable!("rank out of bounds");
     }
@@ -542,12 +667,7 @@ impl ScoreSet {
     }
 
     pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
-        let pool = &self.pool;
-        let store = &self.bucket_store;
-        self.by_score.iter().flat_map(move |(score, bucket_id)| {
-            let slice = store.slice(*bucket_id);
-            slice.iter().map(move |id| (pool.get(*id), score.0))
-        })
+        self.iter_range(0, self.len() as isize - 1)
     }
 
     pub fn iter_from<'a>(
@@ -556,18 +676,35 @@ impl ScoreSet {
         member: &'a str,
         exclusive: bool,
     ) -> impl Iterator<Item = (&'a str, f64)> + 'a {
-        use std::cell::Cell;
-        let pool = &self.pool;
-        let store = &self.bucket_store;
-        let first = Cell::new(true);
-        self.by_score
-            .range(score..)
-            .flat_map(move |(s, bucket_id)| {
-                let bucket = store.slice(*bucket_id);
-                let start_idx = if first.get() {
-                    first.set(false);
-                    if *s == score {
-                        match bucket.binary_search_by(|&m| pool.get(m).cmp(member)) {
+        use std::cmp::Ordering;
+
+        let mut start_idx = 0usize;
+        let mut found = false;
+        for (s, bucket_ref) in &self.by_score {
+            if *s < score {
+                start_idx += match *bucket_ref {
+                    BucketRef::Inline1(_) => 1,
+                    BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
+                };
+                continue;
+            }
+            if *s == score {
+                match *bucket_ref {
+                    BucketRef::Inline1(mid) => {
+                        let cmp = self.pool.get(mid).cmp(member);
+                        match cmp {
+                            Ordering::Less => start_idx += 1,
+                            Ordering::Equal => {
+                                if exclusive {
+                                    start_idx += 1;
+                                }
+                            }
+                            Ordering::Greater => {}
+                        }
+                    }
+                    BucketRef::Handle(bucket_id) => {
+                        let bucket = self.bucket_store.slice(bucket_id);
+                        let pos = match bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
                             Ok(pos) => {
                                 if exclusive {
                                     pos + 1
@@ -576,26 +713,53 @@ impl ScoreSet {
                                 }
                             }
                             Err(pos) => pos,
-                        }
-                    } else {
-                        0
+                        };
+                        start_idx += pos;
                     }
-                } else {
-                    0
-                };
-                bucket[start_idx..]
-                    .iter()
-                    .map(move |id| (pool.get(*id), s.0))
-            })
+                }
+                found = true;
+            } else {
+                found = true;
+            }
+            break;
+        }
+        if !found {
+            start_idx = self.len();
+        }
+        let total = self.len();
+        if total == 0 {
+            return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
+        }
+        let start = start_idx as isize;
+        let stop = total as isize - 1;
+        if start > stop {
+            ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool)
+        } else {
+            ScoreIter::new(
+                &self.by_score,
+                &self.bucket_store,
+                &self.pool,
+                start as usize,
+                stop as usize,
+                total,
+            )
+        }
     }
 
     #[cfg(any(test, feature = "bench"))]
     pub fn all_items(&self) -> Vec<(f64, String)> {
         let mut out = Vec::new();
-        for (score, bucket_id) in &self.by_score {
-            let bucket = self.bucket_store.slice(*bucket_id);
-            for id in bucket {
-                out.push((score.0, self.pool.get(*id).to_owned()));
+        for (score, bucket_ref) in &self.by_score {
+            match *bucket_ref {
+                BucketRef::Inline1(mid) => {
+                    out.push((score.0, self.pool.get(mid).to_owned()));
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let bucket = self.bucket_store.slice(bucket_id);
+                    for id in bucket {
+                        out.push((score.0, self.pool.get(*id).to_owned()));
+                    }
+                }
             }
         }
         out
@@ -625,41 +789,56 @@ impl ScoreSet {
 
     pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
         let prev_map = Self::score_map_bytes(&self.by_score);
-        let (score_key, bucket_id) = if min {
-            let (score, bucket_id) = self.by_score.first_key_value()?;
-            (*score, *bucket_id)
+        let (score_key, bucket_ref) = if min {
+            let (score, bucket_ref) = self.by_score.first_key_value()?;
+            (*score, *bucket_ref)
         } else {
-            let (score, bucket_id) = self.by_score.last_key_value()?;
-            (*score, *bucket_id)
+            let (score, bucket_ref) = self.by_score.last_key_value()?;
+            (*score, *bucket_ref)
         };
-        let member_id = {
-            let bucket = self.bucket_store.slice(bucket_id);
-            debug_assert!(
-                !bucket.is_empty(),
-                "bucket associated with score must contain members",
-            );
-            if min {
-                bucket[0]
-            } else {
-                *bucket.last().expect("bucket must contain member")
-            }
-        };
-        let member_name = self.pool.get(member_id).to_owned();
-        let (removed, delta_remove, now_empty) =
-            self.bucket_store
-                .remove_by_name(bucket_id, &member_name, |m| self.pool.get(m));
-        debug_assert!(removed, "member must exist in bucket when popping");
-        let mut bucket_delta = delta_remove;
-        if removed {
-            if now_empty {
-                let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
-                debug_assert!(freed, "empty bucket must be freed");
-                bucket_delta += free_delta;
+        let mut bucket_delta = 0;
+        let member_id;
+        let member_name;
+        match bucket_ref {
+            BucketRef::Inline1(mid) => {
+                member_id = mid;
+                member_name = self.pool.get(mid).to_owned();
                 self.by_score.remove(&score_key);
-            } else {
-                bucket_delta += self
-                    .bucket_store
-                    .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+            }
+            BucketRef::Handle(bucket_id) => {
+                let bucket = self.bucket_store.slice(bucket_id);
+                debug_assert!(
+                    !bucket.is_empty(),
+                    "bucket associated with score must contain members",
+                );
+                member_id = if min {
+                    bucket[0]
+                } else {
+                    *bucket.last().expect("bucket must contain member")
+                };
+                member_name = self.pool.get(member_id).to_owned();
+                let (removed, delta_remove, now_empty) =
+                    self.bucket_store
+                        .remove_by_name(bucket_id, &member_name, |m| self.pool.get(m));
+                debug_assert!(removed, "member must exist in bucket when popping");
+                bucket_delta += delta_remove;
+                if removed {
+                    if now_empty {
+                        let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
+                        debug_assert!(freed, "empty bucket must be freed");
+                        bucket_delta += free_delta;
+                        self.by_score.remove(&score_key);
+                    } else if self.bucket_store.len(bucket_id) == 1 {
+                        let (remaining, delta_single) = self.bucket_store.take_singleton(bucket_id);
+                        bucket_delta += delta_single;
+                        self.by_score
+                            .insert(score_key, BucketRef::Inline1(remaining));
+                    } else {
+                        bucket_delta += self
+                            .bucket_store
+                            .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
+                    }
+                }
             }
         }
         if bucket_delta != 0 {
@@ -733,14 +912,17 @@ impl ScoreSet {
 
     #[doc(hidden)]
     pub fn bucket_capacity_for_test(&self, score: f64) -> Option<usize> {
-        self.by_score.get(&OrderedFloat(score)).map(|&id| {
-            let bytes = self.bucket_store.capacity_bytes(id);
-            if bytes == 0 {
-                BUCKET_SHRINK_THRESHOLD
-            } else {
-                bytes / size_of::<MemberId>()
+        match self.by_score.get(&OrderedFloat(score))? {
+            BucketRef::Inline1(_) => Some(1),
+            BucketRef::Handle(id) => {
+                let bytes = self.bucket_store.capacity_bytes(*id);
+                Some(if bytes == 0 {
+                    0
+                } else {
+                    bytes / size_of::<MemberId>()
+                })
             }
-        })
+        }
     }
 
     #[cfg(any(test, feature = "bench"))]
@@ -838,27 +1020,46 @@ mod tests {
     fn assert_rank_matches(set: &ScoreSet, seed: u64, round: usize, stage: &str) {
         let mut expected_rank = 0usize;
         let mut iter_total = 0usize;
-        for (score, bucket_id) in &set.by_score {
-            let bucket = set.bucket_store.slice(*bucket_id);
-            assert!(
-                !bucket.is_empty(),
-                "seed {seed} round {round} stage {stage} score {score:?} has empty bucket",
-            );
-            for id in bucket {
-                let member = set.pool.get(*id);
-                let actual = set.rank(member).unwrap_or_else(|| {
-                    panic!(
-                        "seed {seed} round {round} stage {stage} missing rank for member {member}"
-                    )
-                });
-                assert_eq!(
-                    actual,
-                    expected_rank,
-                    "seed {seed} round {round} stage {stage} member {member} expected rank {expected_rank} got {actual}",
-                );
-                expected_rank += 1;
+        for (score, bucket_ref) in &set.by_score {
+            match *bucket_ref {
+                BucketRef::Inline1(mid) => {
+                    let member = set.pool.get(mid);
+                    let actual = set.rank(member).unwrap_or_else(|| {
+                        panic!(
+                            "seed {seed} round {round} stage {stage} missing rank for member {member}"
+                        )
+                    });
+                    assert_eq!(
+                        actual,
+                        expected_rank,
+                        "seed {seed} round {round} stage {stage} member {member} expected rank {expected_rank} got {actual}",
+                    );
+                    expected_rank += 1;
+                    iter_total += 1;
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let bucket = set.bucket_store.slice(bucket_id);
+                    assert!(
+                        !bucket.is_empty(),
+                        "seed {seed} round {round} stage {stage} score {score:?} has empty bucket",
+                    );
+                    for id in bucket {
+                        let member = set.pool.get(*id);
+                        let actual = set.rank(member).unwrap_or_else(|| {
+                            panic!(
+                                "seed {seed} round {round} stage {stage} missing rank for member {member}"
+                            )
+                        });
+                        assert_eq!(
+                            actual,
+                            expected_rank,
+                            "seed {seed} round {round} stage {stage} member {member} expected rank {expected_rank} got {actual}",
+                        );
+                        expected_rank += 1;
+                    }
+                    iter_total += bucket.len();
+                }
             }
-            iter_total += bucket.len();
         }
 
         assert_eq!(
@@ -874,6 +1075,51 @@ mod tests {
             "seed {seed} round {round} stage {stage} iter total {iter_total} != len {}",
             set.len(),
         );
+    }
+
+    #[test]
+    fn unique_scores_do_not_allocate_store() {
+        let mut set = ScoreSet::default();
+        let total = 10_000;
+        for i in 0..total {
+            let member = format!("m{i}");
+            assert!(set.insert(i as f64, &member));
+        }
+        assert_eq!(set.bucket_store.buckets.len(), 0);
+        assert!(set
+            .by_score
+            .values()
+            .all(|bucket_ref| matches!(bucket_ref, BucketRef::Inline1(_))));
+    }
+
+    #[test]
+    fn handle_reverts_to_inline_after_removal() {
+        let mut set = ScoreSet::default();
+        assert!(set.insert(1.0, "a"));
+        assert!(set.insert(1.0, "b"));
+        let bucket_ref = *set
+            .by_score
+            .get(&OrderedFloat(1.0))
+            .expect("score should exist");
+        let bucket_id = match bucket_ref {
+            BucketRef::Handle(id) => id,
+            BucketRef::Inline1(_) => panic!("expected handle after inserting two members"),
+        };
+        assert!(set.remove("a"));
+        let new_ref = *set
+            .by_score
+            .get(&OrderedFloat(1.0))
+            .expect("score should remain present");
+        match new_ref {
+            BucketRef::Inline1(mid) => assert_eq!(set.pool.get(mid), "b"),
+            BucketRef::Handle(_) => panic!("bucket should convert back to inline"),
+        }
+        let slot = set
+            .bucket_store
+            .buckets
+            .get(bucket_id as usize)
+            .expect("slot should exist");
+        assert!(slot.is_none(), "bucket slot should be freed");
     }
 
     #[test]
@@ -1046,13 +1292,20 @@ mod tests {
 
         let set_ref = set.as_ref();
         let mut total_members = 0usize;
-        for (score, bucket_id) in &set_ref.by_score {
-            let bucket = set_ref.bucket_store.slice(*bucket_id);
-            assert!(
-                !bucket.is_empty(),
-                "score {score:?} should not have empty bucket",
-            );
-            total_members += bucket.len();
+        for (score, bucket_ref) in &set_ref.by_score {
+            match *bucket_ref {
+                BucketRef::Inline1(_) => {
+                    total_members += 1;
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let bucket = set_ref.bucket_store.slice(bucket_id);
+                    assert!(
+                        !bucket.is_empty(),
+                        "score {score:?} should not have empty bucket",
+                    );
+                    total_members += bucket.len();
+                }
+            }
         }
         assert_eq!(total_members, set_ref.len());
 
@@ -1074,21 +1327,28 @@ mod tests {
             let member = format!("m{i}");
             assert!(set.insert(1.0, &member));
         }
-        let bucket_id = *set
+        let bucket_ref = *set
             .by_score
             .get(&OrderedFloat(1.0))
             .expect("bucket should exist");
+        let bucket_id = match bucket_ref {
+            BucketRef::Handle(id) => id,
+            BucketRef::Inline1(_) => panic!("bucket should spill when over threshold"),
+        };
         let initial_bytes = set.bucket_store.capacity_bytes(bucket_id);
         assert!(initial_bytes > 0, "expected spill before pops");
         let initial_cap = initial_bytes / size_of::<MemberId>();
         assert!(
             initial_cap > super::BUCKET_SHRINK_THRESHOLD,
-            "expected spill before pops"
+            "expected spill before pops",
         );
 
         let before_mem = set.mem_bytes();
         let before_buckets = set.debug_mem_breakdown().buckets;
-        assert!(before_buckets > 0, "bucket accounting should reflect spill");
+        assert_eq!(
+            before_buckets, initial_bytes,
+            "bucket accounting should reflect spill"
+        );
 
         for _ in 0..super::BUCKET_SHRINK_THRESHOLD {
             assert!(set.pop_one(min).is_some());
@@ -1102,26 +1362,32 @@ mod tests {
             after_mem < before_mem,
             "mem_bytes should shrink: before {before_mem} after {after_mem}"
         );
+        let remaining_ref = set
+            .by_score
+            .get(&OrderedFloat(1.0))
+            .expect("bucket should remain present");
+        let remaining_bytes = match remaining_ref {
+            BucketRef::Inline1(_) => 0,
+            BucketRef::Handle(id) => set.bucket_store.capacity_bytes(*id),
+        };
         assert!(
-            after_buckets < before_buckets,
-            "bucket breakdown should shrink: before {before_buckets} after {after_buckets}"
+            remaining_bytes <= super::BUCKET_SHRINK_THRESHOLD * size_of::<MemberId>(),
+            "remaining capacity should be bounded by threshold",
+        );
+        assert_eq!(
+            after_buckets, remaining_bytes,
+            "bucket accounting should match remaining spill",
         );
         let mem_drop = before_mem - after_mem;
         assert!(
-            mem_drop >= initial_bytes,
-            "bucket shrink should free at least initial capacity: drop {mem_drop} initial {initial_bytes}"
+            mem_drop >= initial_bytes - remaining_bytes,
+            "bucket shrink should free at least previous spill: drop {mem_drop} initial {initial_bytes} remaining {remaining_bytes}"
         );
         assert_eq!(
             before_buckets - after_buckets,
-            initial_bytes,
-            "bucket breakdown should match freed bytes"
+            initial_bytes - remaining_bytes,
+            "bucket breakdown should match freed bytes",
         );
-        assert_eq!(
-            set.bucket_store.capacity_bytes(bucket_id),
-            0,
-            "bucket should be inline after shrink"
-        );
-        assert_eq!(after_buckets, 0, "bucket accounting should return inline");
         assert_eq!(
             set.bucket_capacity_for_test(1.0),
             Some(super::BUCKET_SHRINK_THRESHOLD)

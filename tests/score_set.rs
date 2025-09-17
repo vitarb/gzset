@@ -75,7 +75,7 @@ fn grow_and_shrink_bucket() {
     assert!(set.bucket_capacity_for_test(1.0).is_some_and(|c| c > 4));
     set.remove("a");
     set.remove("b");
-    assert_eq!(set.bucket_capacity_for_test(1.0), Some(4));
+    assert_eq!(set.bucket_capacity_for_test(1.0), Some(3));
 }
 
 #[test]
