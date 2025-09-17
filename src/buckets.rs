@@ -1,65 +1,18 @@
-use std::{convert::TryFrom, mem, mem::size_of};
-
-use smallvec::SmallVec;
+use std::{convert::TryFrom, mem::size_of};
 
 use crate::pool::MemberId;
 
 pub type BucketId = u32;
 
-const INLINE: usize = 4;
-
-#[derive(Debug)]
-pub(crate) enum Bucket {
-    Inline(SmallVec<[MemberId; INLINE]>),
-    Heap(Vec<MemberId>),
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum BucketRef {
+    /// Exactly one member, stored inline in the score map.
+    Inline1(MemberId),
+    /// Index into [`BucketStore`].
+    Handle(BucketId),
 }
 
-impl Bucket {
-    #[inline]
-    fn new_inline() -> Self {
-        Self::Inline(SmallVec::new())
-    }
-
-    #[inline]
-    fn is_heap(&self) -> bool {
-        matches!(self, Self::Heap(_))
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        match self {
-            Self::Inline(inline) => inline.len(),
-            Self::Heap(heap) => heap.len(),
-        }
-    }
-
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    fn capacity_bytes(&self) -> usize {
-        match self {
-            Self::Inline(_) => 0,
-            Self::Heap(heap) => heap.capacity() * size_of::<MemberId>(),
-        }
-    }
-
-    #[inline]
-    fn as_slice(&self) -> &[MemberId] {
-        match self {
-            Self::Inline(inline) => inline.as_slice(),
-            Self::Heap(heap) => heap.as_slice(),
-        }
-    }
-}
-
-impl Default for Bucket {
-    fn default() -> Self {
-        Self::new_inline()
-    }
-}
+pub type Bucket = Vec<MemberId>;
 
 #[derive(Default, Debug)]
 pub struct BucketStore {
@@ -93,12 +46,12 @@ impl BucketStore {
                 .get_mut(id as usize)
                 .expect("reused bucket id out of bounds");
             debug_assert!(slot.is_none(), "reused bucket slot must be empty");
-            *slot = Some(Bucket::new_inline());
+            *slot = Some(Vec::new());
             id
         } else {
             let idx = self.buckets.len();
             let id = BucketId::try_from(idx).expect("too many buckets allocated");
-            self.buckets.push(Some(Bucket::new_inline()));
+            self.buckets.push(Some(Vec::new()));
             id
         }
     }
@@ -110,7 +63,7 @@ impl BucketStore {
             .expect("invalid bucket id");
         if let Some(bucket) = slot {
             if bucket.is_empty() {
-                let spilled_bytes = bucket.capacity_bytes();
+                let spilled_bytes = bucket.capacity() * size_of::<MemberId>();
                 *slot = None;
                 self.free.push(id);
                 let delta = if spilled_bytes == 0 {
@@ -138,44 +91,22 @@ impl BucketStore {
         F: Fn(MemberId) -> &'a str,
     {
         let bucket = self.bucket_mut(id);
-        let spilled_before = bucket.is_heap();
+        let cap_before = bucket.capacity();
+        let spilled_before = cap_before > 0;
         let member_name = cmp_name(member);
-        match bucket {
-            Bucket::Inline(inline) => match inline
-                .binary_search_by(|&m| cmp_name(m).cmp(member_name))
-            {
-                Ok(pos) => (false, 0, spilled_before, false, pos),
-                Err(pos) => {
-                    if inline.len() == INLINE {
-                        let existing = mem::take(inline);
-                        let mut heap = Vec::with_capacity(INLINE * 2);
-                        heap.extend(existing);
-                        heap.insert(pos, member);
-                        let bytes = heap.capacity() * size_of::<MemberId>();
-                        let delta = isize::try_from(bytes).expect("bucket spill delta overflow");
-                        *bucket = Bucket::Heap(heap);
-                        (true, delta, spilled_before, true, pos)
-                    } else {
-                        inline.insert(pos, member);
-                        (true, 0, spilled_before, false, pos)
-                    }
-                }
-            },
-            Bucket::Heap(heap) => match heap.binary_search_by(|&m| cmp_name(m).cmp(member_name)) {
-                Ok(pos) => (false, 0, spilled_before, true, pos),
-                Err(pos) => {
-                    let cap_before = heap.capacity();
-                    heap.insert(pos, member);
-                    let cap_after = heap.capacity();
-                    let delta = if cap_after > cap_before {
-                        let bytes = (cap_after - cap_before) * size_of::<MemberId>();
-                        isize::try_from(bytes).expect("bucket spill delta overflow")
-                    } else {
-                        0
-                    };
-                    (true, delta, spilled_before, true, pos)
-                }
-            },
+        match bucket.binary_search_by(|&m| cmp_name(m).cmp(member_name)) {
+            Ok(pos) => (false, 0, spilled_before, bucket.capacity() > 0, pos),
+            Err(pos) => {
+                bucket.insert(pos, member);
+                let cap_after = bucket.capacity();
+                let delta = if cap_after > cap_before {
+                    let bytes = (cap_after - cap_before) * size_of::<MemberId>();
+                    isize::try_from(bytes).expect("bucket spill delta overflow")
+                } else {
+                    0
+                };
+                (true, delta, spilled_before, cap_after > 0, pos)
+            }
         }
     }
 
@@ -189,41 +120,44 @@ impl BucketStore {
         F: Fn(MemberId) -> &'a str,
     {
         let bucket = self.bucket_mut(id);
-        match bucket {
-            Bucket::Inline(inline) => match inline.binary_search_by(|&m| cmp_name(m).cmp(name)) {
-                Ok(pos) => {
-                    inline.remove(pos);
-                    (true, 0, inline.is_empty())
-                }
-                Err(_) => (false, 0, false),
-            },
-            Bucket::Heap(heap) => match heap.binary_search_by(|&m| cmp_name(m).cmp(name)) {
-                Ok(pos) => {
-                    heap.remove(pos);
-                    (true, 0, heap.is_empty())
-                }
-                Err(_) => (false, 0, false),
-            },
+        match bucket.binary_search_by(|&m| cmp_name(m).cmp(name)) {
+            Ok(pos) => {
+                bucket.remove(pos);
+                (true, 0, bucket.is_empty())
+            }
+            Err(_) => (false, 0, false),
         }
+    }
+
+    pub fn take_singleton(&mut self, id: BucketId) -> (MemberId, isize) {
+        let slot = self
+            .buckets
+            .get_mut(id as usize)
+            .expect("invalid bucket id");
+        let bucket = slot.take().expect("bucket must exist");
+        debug_assert_eq!(bucket.len(), 1, "take_singleton requires len == 1");
+        let member = bucket[0];
+        let spilled_bytes = bucket.capacity() * size_of::<MemberId>();
+        let delta = if spilled_bytes == 0 {
+            0
+        } else {
+            -isize::try_from(spilled_bytes).expect("bucket spill free delta overflow")
+        };
+        self.free.push(id);
+        (member, delta)
     }
 
     pub fn maybe_shrink(&mut self, id: BucketId, threshold: usize) -> isize {
         let bucket = self.bucket_mut(id);
-        let limit = threshold.min(INLINE);
-        let should_shrink = matches!(bucket, Bucket::Heap(heap) if heap.len() <= limit);
-        if should_shrink {
-            let old_bucket = mem::take(bucket);
-            if let Bucket::Heap(old_heap) = old_bucket {
-                let bytes = old_heap.capacity() * size_of::<MemberId>();
-                if let Bucket::Inline(inline) = bucket {
-                    inline.extend(old_heap);
-                } else {
-                    unreachable!("bucket must be inline after replacement");
-                }
-                let bytes = isize::try_from(bytes).expect("bucket shrink delta overflow");
-                -bytes
+        if bucket.len() <= threshold {
+            let cap_before = bucket.capacity();
+            bucket.shrink_to_fit();
+            let cap_after = bucket.capacity();
+            if cap_after < cap_before {
+                let bytes = (cap_before - cap_after) * size_of::<MemberId>();
+                -isize::try_from(bytes).expect("bucket shrink delta overflow")
             } else {
-                unreachable!("expected heap bucket when shrinking");
+                0
             }
         } else {
             0
@@ -231,7 +165,7 @@ impl BucketStore {
     }
 
     pub fn capacity_bytes(&self, id: BucketId) -> usize {
-        self.bucket(id).capacity_bytes()
+        self.bucket(id).capacity() * size_of::<MemberId>()
     }
 
     pub fn len(&self, id: BucketId) -> usize {
