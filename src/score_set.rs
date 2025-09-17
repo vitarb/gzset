@@ -1114,12 +1114,13 @@ mod tests {
             BucketRef::Inline1(mid) => assert_eq!(set.pool.get(mid), "b"),
             BucketRef::Handle(_) => panic!("bucket should convert back to inline"),
         }
-        let slot = set
-            .bucket_store
-            .buckets
-            .get(bucket_id as usize)
-            .expect("slot should exist");
-        assert!(slot.is_none(), "bucket slot should be freed");
+        match set.bucket_store.buckets.get(bucket_id as usize) {
+            Some(slot) => assert!(slot.is_none(), "bucket slot should be freed"),
+            None => assert!(
+                set.bucket_store.buckets.len() <= bucket_id as usize,
+                "bucket vector should be truncated or empty"
+            ),
+        }
     }
 
     #[test]
@@ -1246,6 +1247,41 @@ mod tests {
             let diff = usage as isize - breakdown as isize;
             assert!(diff.abs() < 1024, "usage {usage} breakdown {breakdown}");
         }
+    }
+
+    #[test]
+    fn compacts_bucket_store_after_freeing_tail() {
+        let mut set = Box::new(ScoreSet::default());
+        let bucket_count = 128usize;
+        for score in 0..bucket_count {
+            let member_a = format!("m{score}_a");
+            let member_b = format!("m{score}_b");
+            assert!(set.insert(score as f64, &member_a));
+            assert!(set.insert(score as f64, &member_b));
+        }
+        assert_eq!(set.bucket_store.buckets.len(), bucket_count);
+        let before_capacity = set.bucket_store.buckets.capacity();
+        assert!(before_capacity >= bucket_count);
+        let before_usage = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
+
+        for score in (bucket_count / 2..bucket_count).rev() {
+            let member_a = format!("m{score}_a");
+            let member_b = format!("m{score}_b");
+            assert!(set.remove(&member_a));
+            assert!(set.remove(&member_b));
+        }
+
+        assert_eq!(set.bucket_store.buckets.len(), bucket_count / 2);
+        let after_capacity = set.bucket_store.buckets.capacity();
+        assert!(
+            after_capacity < before_capacity,
+            "capacity should shrink: before {before_capacity} after {after_capacity}"
+        );
+        let after_usage = unsafe { gzset_mem_usage((&*set as *const ScoreSet) as *const c_void) };
+        assert!(
+            after_usage < before_usage,
+            "mem usage should shrink: before {before_usage} after {after_usage}"
+        );
     }
 
     #[test]
