@@ -1,6 +1,10 @@
 use crate::format::{fmt_f64, with_fmt_buf};
 use crate::{score_set::ScoreSet, FastHashMap};
 use ordered_float::OrderedFloat;
+use redis_module::raw::{
+    RedisModule_ReplySetArrayLength, RedisModule_ReplyWithArray, RedisModule_ReplyWithStringBuffer,
+    REDISMODULE_POSTPONED_ARRAY_LEN,
+};
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_void};
@@ -222,20 +226,43 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
-    let popped = with_set_write(ctx, key, |set| set.pop_n(min, count))?;
-    if popped.is_empty() {
-        if count == 1 {
-            Ok(RedisValue::Null)
-        } else {
-            Ok(RedisValue::Array(Vec::new()))
+    let emitted = with_set_write(ctx, key, |set| {
+        if set.is_empty() {
+            return None;
         }
-    } else {
-        let mut result = Vec::with_capacity(popped.len() * 2);
-        for (member, score) in popped {
-            result.push(member.into());
-            with_fmt_buf(|b| result.push(fmt_f64(b, score).to_owned().into()));
+        let raw = ctx.get_raw();
+        unsafe {
+            RedisModule_ReplyWithArray.unwrap()(raw, REDISMODULE_POSTPONED_ARRAY_LEN as c_long)
+        };
+        let mut pairs = 0usize;
+        set.pop_n_visit(min, count, |name, score| {
+            unsafe {
+                RedisModule_ReplyWithStringBuffer.unwrap()(raw, name.as_ptr().cast(), name.len());
+            }
+            with_fmt_buf(|b| {
+                let formatted = fmt_f64(b, score);
+                unsafe {
+                    RedisModule_ReplyWithStringBuffer.unwrap()(
+                        raw,
+                        formatted.as_ptr().cast(),
+                        formatted.len(),
+                    );
+                }
+            });
+            pairs += 1;
+        });
+        unsafe { RedisModule_ReplySetArrayLength.unwrap()(raw, (pairs * 2) as c_long) };
+        Some(pairs)
+    })?;
+    match emitted {
+        Some(_) => Ok(RedisValue::NoReply),
+        None => {
+            if count == 1 {
+                Ok(RedisValue::Null)
+            } else {
+                Ok(RedisValue::Array(Vec::new()))
+            }
         }
-        Ok(RedisValue::Array(result))
     }
 }
 

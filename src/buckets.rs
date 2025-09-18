@@ -208,4 +208,63 @@ impl BucketStore {
     pub fn len(&self, id: BucketId) -> usize {
         self.bucket(id).len()
     }
+
+    pub fn drain_front_k(
+        &mut self,
+        id: BucketId,
+        k: usize,
+        shrink_threshold: usize,
+    ) -> (bool, isize) {
+        let remaining;
+        {
+            let bucket = self.bucket_mut(id);
+            let take = k.min(bucket.len());
+            if take == 0 {
+                return (false, 0);
+            }
+            bucket.drain(0..take);
+            remaining = bucket.len();
+        }
+
+        if remaining == 0 {
+            let (freed, delta) = self.free_if_empty(id);
+            debug_assert!(freed, "emptied bucket must be freed");
+            (true, delta)
+        } else if remaining == 1 {
+            (false, 0)
+        } else {
+            let delta = self.maybe_shrink(id, shrink_threshold);
+            (false, delta)
+        }
+    }
+
+    pub fn drain_back_k(
+        &mut self,
+        id: BucketId,
+        k: usize,
+        shrink_threshold: usize,
+    ) -> (bool, isize) {
+        let remaining;
+        {
+            let bucket = self.bucket_mut(id);
+            let take = k.min(bucket.len());
+            if take == 0 {
+                return (false, 0);
+            }
+            let new_len = bucket.len().saturating_sub(take);
+            bucket.truncate(new_len);
+            remaining = bucket.len();
+        }
+
+        if remaining == 0 {
+            let (freed, delta) = self.free_if_empty(id);
+            debug_assert!(freed, "emptied bucket must be freed");
+            (true, delta)
+        } else if remaining == 1 {
+            (false, 0)
+        } else {
+            let delta = self.maybe_shrink(id, shrink_threshold);
+            (false, delta)
+        }
+    }
 }

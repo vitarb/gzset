@@ -162,6 +162,20 @@ impl StringPool {
         Some(id)
     }
 
+    pub fn remove_by_id(&mut self, id: MemberId) -> Option<usize> {
+        let slot = self.index.get_mut(id as usize)?;
+        let loc = slot.take()?;
+        let (hash, len) = {
+            let bytes = self.loc_bytes(loc);
+            (self.hash_bytes(bytes), bytes.len())
+        };
+        let removed = self.table.remove_entry(hash, |entry| entry.id == id);
+        debug_assert!(removed.is_some(), "entry must exist when removing by id");
+        self.free_ids.push(id);
+        self.len -= 1;
+        Some(len)
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
