@@ -116,6 +116,116 @@ impl<'a> BackState<'a> {
     }
 }
 
+pub struct RangeIterFwd<'a> {
+    pool: &'a StringPool,
+    store: &'a BucketStore,
+    outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketRef>,
+    cur: Option<(std::slice::Iter<'a, MemberId>, OrderedFloat<f64>)>,
+    remaining_skip: usize,
+    remaining_take: usize,
+}
+
+impl<'a> RangeIterFwd<'a> {
+    fn new(
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
+        store: &'a BucketStore,
+        pool: &'a StringPool,
+        skip: usize,
+        take: usize,
+    ) -> Self {
+        Self {
+            pool,
+            store,
+            outer: map.iter(),
+            cur: None,
+            remaining_skip: skip,
+            remaining_take: take,
+        }
+    }
+
+    fn empty(
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
+        store: &'a BucketStore,
+        pool: &'a StringPool,
+    ) -> Self {
+        Self::new(map, store, pool, 0, 0)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.remaining_take
+    }
+}
+
+impl<'a> Iterator for RangeIterFwd<'a> {
+    type Item = (&'a str, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining_take == 0 {
+            return None;
+        }
+        loop {
+            if let Some((ref mut iter, score)) = self.cur {
+                for &id in iter.by_ref() {
+                    if self.remaining_skip > 0 {
+                        self.remaining_skip -= 1;
+                        continue;
+                    }
+                    self.remaining_take -= 1;
+                    let member = self.pool.get(id);
+                    return Some((member, score.0));
+                }
+                self.cur = None;
+            }
+            let Some((score, bucket_ref)) = self.outer.next() else {
+                self.remaining_take = 0;
+                return None;
+            };
+            match *bucket_ref {
+                BucketRef::Inline1(member) => {
+                    if self.remaining_skip > 0 {
+                        self.remaining_skip -= 1;
+                        continue;
+                    }
+                    self.remaining_take -= 1;
+                    let member = self.pool.get(member);
+                    return Some((member, score.0));
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let mut slice = self.store.slice(bucket_id);
+                    if slice.is_empty() {
+                        continue;
+                    }
+                    if self.remaining_skip >= slice.len() {
+                        self.remaining_skip -= slice.len();
+                        continue;
+                    }
+                    if self.remaining_skip > 0 {
+                        let skip = self.remaining_skip;
+                        self.remaining_skip = 0;
+                        slice = &slice[skip..];
+                    }
+                    if slice.is_empty() {
+                        continue;
+                    }
+                    self.cur = Some((slice.iter(), *score));
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.remaining();
+        (rem, Some(rem))
+    }
+}
+
+impl<'a> ExactSizeIterator for RangeIterFwd<'a> {
+    fn len(&self) -> usize {
+        self.remaining()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
     pool: &'a StringPool,
@@ -699,8 +809,36 @@ impl ScoreSet {
         )
     }
 
+    pub fn iter_range_fwd(&self, start: isize, stop: isize) -> RangeIterFwd<'_> {
+        let len = self.pool.len() as isize;
+        if len == 0 {
+            return RangeIterFwd::empty(&self.by_score, &self.bucket_store, &self.pool);
+        }
+        let mut start = if start < 0 { len + start } else { start };
+        let mut stop = if stop < 0 { len + stop } else { stop };
+        if start < 0 {
+            start = 0;
+        }
+        if stop < 0 {
+            return RangeIterFwd::empty(&self.by_score, &self.bucket_store, &self.pool);
+        }
+        if stop >= len {
+            stop = len - 1;
+        }
+        if start > stop {
+            return RangeIterFwd::empty(&self.by_score, &self.bucket_store, &self.pool);
+        }
+        RangeIterFwd::new(
+            &self.by_score,
+            &self.bucket_store,
+            &self.pool,
+            start as usize,
+            (stop - start + 1) as usize,
+        )
+    }
+
     pub fn range_iter(&self, start: isize, stop: isize) -> Vec<(f64, String)> {
-        self.iter_range(start, stop)
+        self.iter_range_fwd(start, stop)
             .map(|(m, s)| (s, m.to_owned()))
             .collect()
     }
@@ -714,7 +852,7 @@ impl ScoreSet {
     }
 
     pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
-        self.iter_range(0, self.len() as isize - 1)
+        self.iter_range_fwd(0, self.len() as isize - 1)
     }
 
     pub fn iter_from<'a>(

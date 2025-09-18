@@ -11,7 +11,7 @@ fn bench_range(c: &mut Criterion) {
             for (s, m) in &entries {
                 set.insert(*s, m);
             }
-            let mut iter = set.iter_range(0, entries.len() as isize - 1);
+            let mut iter = set.iter_range_fwd(0, entries.len() as isize - 1);
             for _ in &mut iter {}
         })
     });

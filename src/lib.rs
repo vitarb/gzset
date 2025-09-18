@@ -8,7 +8,7 @@ pub use crate::{
     command::register_commands,
     format::{fmt_f64, with_fmt_buf},
     pool::{FastHashMap, MemberId, StringPool},
-    score_set::{ScoreIter, ScoreSet},
+    score_set::{RangeIterFwd, ScoreIter, ScoreSet},
 };
 
 mod buckets;
