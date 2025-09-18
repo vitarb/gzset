@@ -13,11 +13,29 @@ fn bench_pop(c: &mut Criterion) {
             let _ = set.pop_all(true);
         })
     });
+    group.bench_function("pop_min_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
+            }
+            let _ = set.pop_all(true);
+        })
+    });
     group.bench_function("pop_max", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
             for (s, m) in &entries {
                 set.insert(*s, m);
+            }
+            let _ = set.pop_all(false);
+        })
+    });
+    group.bench_function("pop_max_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
             }
             let _ = set.pop_all(false);
         })
