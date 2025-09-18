@@ -6,6 +6,7 @@ use redis_module::raw::{
     REDISMODULE_POSTPONED_ARRAY_LEN,
 };
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
+use std::convert::TryFrom;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long, c_void};
 
@@ -157,22 +158,35 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let key = args[1].try_as_str()?;
     let parse_index = |arg: &RedisString| -> Result<isize> {
-        arg.to_string_lossy()
-            .parse::<isize>()
-            .map_err(|_| RedisError::Str("ERR index is not an integer or out of range"))
+        let x: i64 = arg.parse_integer()?;
+        isize::try_from(x).map_err(|_| RedisError::Str("ERR index is out of range"))
     };
     let start = parse_index(&args[2])?;
     let stop = parse_index(&args[3])?;
     with_set_read(ctx, key, |s| {
-        let mut it = s.iter_range(start, stop);
-        unsafe {
-            raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.len() as c_long);
-            for (m, _) in &mut it {
-                raw::RedisModule_ReplyWithStringBuffer.unwrap()(
-                    ctx.get_raw(),
-                    m.as_ptr().cast(),
-                    m.len(),
-                );
+        let len = s.len();
+        if len > 0 && start == 0 && (stop == -1 || (stop >= 0 && stop as usize == len - 1)) {
+            unsafe {
+                raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), len as c_long);
+                for (m, _) in s.iter_all() {
+                    raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                        ctx.get_raw(),
+                        m.as_ptr().cast(),
+                        m.len(),
+                    );
+                }
+            }
+        } else {
+            let mut it = s.iter_range_fwd(start, stop);
+            unsafe {
+                raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.size_hint().0 as c_long);
+                for (m, _) in &mut it {
+                    raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                        ctx.get_raw(),
+                        m.as_ptr().cast(),
+                        m.len(),
+                    );
+                }
             }
         }
     })?;
