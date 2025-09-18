@@ -30,15 +30,16 @@ pub(crate) struct Loc {
     len: u32,
 }
 
-// Entry we store in RawTable. No owned strings.
+// Entry we store in RawTable. We only keep the hash and the id.
+// The string bytes are fetched via `index[id] -> Loc` when needed.
 pub(crate) struct KeyEntry {
     hash: u64,
-    loc: Loc,
     id: MemberId,
 }
 
 // Arena parameters
-const ARENA_CHUNK: usize = 4 * 1024 * 1024; // 4 MiB, tune if needed
+// Smaller chunks reduce worst-case slack kept in the last arena slice.
+const ARENA_CHUNK: usize = 1024 * 1024; // 1 MiB
 
 pub struct StringPool {
     hasher: Build,
@@ -88,10 +89,14 @@ impl StringPool {
     pub fn intern(&mut self, s: &str) -> MemberId {
         let bytes = s.as_bytes();
         let hash = self.hash_bytes(bytes);
-        if let Some(entry) = self
-            .table
-            .get(hash, |entry| self.loc_bytes(entry.loc) == bytes)
-        {
+        if let Some(entry) = self.table.get(hash, |entry| {
+            // Compare using bytes from index[entry.id].
+            if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
+                self.loc_bytes(loc) == bytes
+            } else {
+                false
+            }
+        }) {
             return entry.id;
         }
 
@@ -107,7 +112,7 @@ impl StringPool {
         };
 
         self.table
-            .insert(hash, KeyEntry { hash, loc, id }, |entry| entry.hash);
+            .insert(hash, KeyEntry { hash, id }, |entry| entry.hash);
         self.len += 1;
         id
     }
@@ -116,7 +121,13 @@ impl StringPool {
         let bytes = s.as_bytes();
         let hash = self.hash_bytes(bytes);
         self.table
-            .get(hash, |entry| self.loc_bytes(entry.loc) == bytes)
+            .get(hash, |entry| {
+                if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
+                    self.loc_bytes(loc) == bytes
+                } else {
+                    false
+                }
+            })
             .map(|entry| entry.id)
     }
 
@@ -133,16 +144,17 @@ impl StringPool {
     pub fn remove(&mut self, s: &str) -> Option<MemberId> {
         let bytes = s.as_bytes();
         let hash = self.hash_bytes(bytes);
-        let (id, loc) = match self
-            .table
-            .get(hash, |entry| self.loc_bytes(entry.loc) == bytes)
-        {
-            Some(entry) => (entry.id, entry.loc),
+        let id = match self.table.get(hash, |entry| {
+            if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
+                self.loc_bytes(loc) == bytes
+            } else {
+                false
+            }
+        }) {
+            Some(entry) => entry.id,
             None => return None,
         };
-        let removed = self
-            .table
-            .remove_entry(hash, |entry| entry.id == id && entry.loc == loc);
+        let removed = self.table.remove_entry(hash, |entry| entry.id == id);
         debug_assert!(removed.is_some(), "entry must exist when removing");
         self.index[id as usize] = None;
         self.free_ids.push(id);

@@ -1,6 +1,7 @@
 use ordered_float::OrderedFloat;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
+    convert::TryFrom,
     mem::size_of,
 };
 
@@ -289,6 +290,20 @@ impl ScoreSet {
         }
     }
 
+    /// Drop trailing EMPTY_SCORE slots and shrink capacity if it's far above the new length.
+    fn compact_scores_tail(&mut self) {
+        let mut new_len = self.scores.len();
+        while new_len > 0 && self.scores[new_len - 1].is_nan() {
+            new_len -= 1;
+        }
+        if new_len < self.scores.len() {
+            self.scores.truncate(new_len);
+            if self.scores.capacity() > new_len.saturating_mul(2) {
+                self.scores.shrink_to_fit();
+            }
+        }
+    }
+
     #[inline]
     fn scores_bytes(scores: &Vec<f64>) -> usize {
         scores.capacity() * size_of::<f64>()
@@ -419,7 +434,13 @@ impl ScoreSet {
         let inserted = match self.by_score.entry(key) {
             Entry::Occupied(mut entry) => match *entry.get() {
                 BucketRef::Inline1(existing_id) => {
-                    let bucket_id = self.bucket_store.alloc();
+                    // Pre-allocate for exactly the two elements we're about to insert.
+                    let bucket_id = self.bucket_store.alloc_with(2);
+                    let prealloc_bytes = self.bucket_store.capacity_bytes(bucket_id);
+                    if prealloc_bytes > 0 {
+                        bucket_delta +=
+                            isize::try_from(prealloc_bytes).expect("bucket prealloc overflow");
+                    }
                     let (_, delta_existing, _spilled_before, _spilled_after, _pos) = self
                         .bucket_store
                         .insert_sorted(bucket_id, existing_id, |m| self.pool.get(m));
@@ -522,6 +543,8 @@ impl ScoreSet {
         if idx < self.scores.len() {
             self.scores[idx] = EMPTY_SCORE;
         }
+        // Try to reclaim tail capacity if we just cleared the last live slot(s).
+        self.compact_scores_tail();
 
         let new_scores = Self::scores_bytes(&self.scores);
         if new_scores >= prev_scores {
@@ -854,6 +877,8 @@ impl ScoreSet {
         if idx < self.scores.len() {
             self.scores[idx] = EMPTY_SCORE;
         }
+        // Reclaim tail capacity if we popped the highest id(s).
+        self.compact_scores_tail();
         let new_scores = Self::scores_bytes(&self.scores);
         if new_scores >= prev_scores {
             let delta = new_scores - prev_scores;
