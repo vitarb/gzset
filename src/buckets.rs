@@ -39,21 +39,33 @@ impl BucketStore {
             .expect("invalid bucket id")
     }
 
-    pub fn alloc(&mut self) -> BucketId {
+    fn alloc_inner(&mut self, min_cap: usize) -> BucketId {
         if let Some(id) = self.free.pop() {
             let slot = self
                 .buckets
                 .get_mut(id as usize)
                 .expect("reused bucket id out of bounds");
             debug_assert!(slot.is_none(), "reused bucket slot must be empty");
-            *slot = Some(Vec::new());
+            *slot = Some(Vec::with_capacity(min_cap));
             id
         } else {
             let idx = self.buckets.len();
             let id = BucketId::try_from(idx).expect("too many buckets allocated");
-            self.buckets.push(Some(Vec::new()));
+            self.buckets.push(Some(Vec::with_capacity(min_cap)));
             id
         }
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn alloc(&mut self) -> BucketId {
+        self.alloc_inner(0)
+    }
+
+    /// Allocate a new bucket with at least `min_cap` capacity.
+    #[inline]
+    pub fn alloc_with(&mut self, min_cap: usize) -> BucketId {
+        self.alloc_inner(min_cap)
     }
 
     pub fn free_if_empty(&mut self, id: BucketId) -> (bool, isize) {
