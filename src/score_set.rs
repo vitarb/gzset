@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::buckets::{BucketRef, BucketStore};
+use crate::format::{fmt_f64, with_fmt_buf};
 use crate::pool::{MemberId, StringPool};
 
 /// Buckets trim their heap capacity once they contain at most this many members.
@@ -1081,7 +1082,7 @@ impl ScoreSet {
 
     pub fn pop_n_visit<F>(&mut self, min: bool, n: usize, mut visit: F) -> usize
     where
-        F: FnMut(&str, f64),
+        F: FnMut(&str, f64, &str),
     {
         if n == 0 {
             return 0;
@@ -1109,11 +1110,12 @@ impl ScoreSet {
 
             let prev_map = Self::score_map_bytes(&self.by_score);
             let score = score_key.0;
+            let score_s = with_fmt_buf(|b| fmt_f64(b, score).to_owned());
             match bucket_ref {
                 BucketRef::Inline1(member_id) => {
                     {
                         let name = self.pool.get(member_id);
-                        visit(name, score);
+                        visit(name, score, score_s.as_str());
                     }
                     self.clear_score_slot(member_id);
                     let removed = self.pool.remove_by_id(member_id);
@@ -1142,7 +1144,7 @@ impl ScoreSet {
                     for &member_id in &member_buffer {
                         {
                             let name = self.pool.get(member_id);
-                            visit(name, score);
+                            visit(name, score, score_s.as_str());
                         }
                         self.clear_score_slot(member_id);
                         let removed = self.pool.remove_by_id(member_id);
@@ -1226,7 +1228,7 @@ impl ScoreSet {
 
     pub fn pop_n(&mut self, min: bool, n: usize) -> Vec<(String, f64)> {
         let mut out = Vec::with_capacity(n.min(self.len()));
-        self.pop_n_visit(min, n, |name, score| {
+        self.pop_n_visit(min, n, |name, score, _| {
             out.push((name.to_owned(), score));
         });
         out

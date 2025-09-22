@@ -249,20 +249,15 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
             RedisModule_ReplyWithArray.unwrap()(raw, REDISMODULE_POSTPONED_ARRAY_LEN as c_long)
         };
         let mut pairs = 0usize;
-        set.pop_n_visit(min, count, |name, score| {
+        set.pop_n_visit(min, count, |name, _score, score_s| {
             unsafe {
                 RedisModule_ReplyWithStringBuffer.unwrap()(raw, name.as_ptr().cast(), name.len());
+                RedisModule_ReplyWithStringBuffer.unwrap()(
+                    raw,
+                    score_s.as_ptr().cast(),
+                    score_s.len(),
+                );
             }
-            with_fmt_buf(|b| {
-                let formatted = fmt_f64(b, score);
-                unsafe {
-                    RedisModule_ReplyWithStringBuffer.unwrap()(
-                        raw,
-                        formatted.as_ptr().cast(),
-                        formatted.len(),
-                    );
-                }
-            });
             pairs += 1;
         });
         unsafe { RedisModule_ReplySetArrayLength.unwrap()(raw, (pairs * 2) as c_long) };
