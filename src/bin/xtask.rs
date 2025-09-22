@@ -135,19 +135,12 @@ fn build_module(profile: Profile, extra_rustflags: Option<&str>) -> Result<()> {
     build.arg("--features").arg("redis-module");
 
     if let Some(flags) = extra_rustflags {
-        #[cfg(target_os = "linux")]
-        {
-            let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
-            if !rustflags.is_empty() {
-                rustflags.push(' ');
-            }
-            rustflags.push_str(flags);
-            build.env("RUSTFLAGS", rustflags);
+        let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+        if !rustflags.is_empty() {
+            rustflags.push(' ');
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = flags;
-        }
+        rustflags.push_str(flags);
+        build.env("RUSTFLAGS", rustflags);
     }
 
     anyhow::ensure!(build.status()?.success(), "cargo build failed");
@@ -268,35 +261,45 @@ fn flame_valkey(
     shutdown: bool,
     extra_args: &[String],
 ) -> Result<()> {
-    if !cfg!(target_os = "linux") {
-        anyhow::bail!("perf profiling is only supported on Linux");
+    if cfg!(target_os = "linux") {
+        flame_linux(
+            profile,
+            port_opt,
+            duration,
+            out_dir.clone(),
+            shutdown,
+            extra_args,
+        )
+    } else if cfg!(target_os = "macos") {
+        flame_macos(profile, port_opt, duration, out_dir, shutdown, extra_args)
+    } else {
+        anyhow::bail!("flame profiling is supported on Linux (perf) and macOS (sample) only");
     }
+}
 
+fn flame_linux(
+    profile: Profile,
+    port_opt: Option<u16>,
+    duration: u64,
+    out_dir: Option<String>,
+    shutdown: bool,
+    extra_args: &[String],
+) -> Result<()> {
     build_module(profile, Some("-C force-frame-pointers=yes"))?;
-    let (mut child, port, so_path) = spawn_valkey(profile, port_opt, false, extra_args)?;
+    let (child, port, so_path) = spawn_valkey(profile, port_opt, false, extra_args)?;
     let pid = child.id();
 
     println!("=> valkey-server PID {pid}");
     println!("=> module path         {}", so_path.display());
     println!("=> redis url           redis://127.0.0.1:{port}");
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let default_dir = Path::new("target")
-        .join("flame")
-        .join(timestamp.to_string());
-    let out_path = out_dir.map(PathBuf::from).unwrap_or(default_dir);
-    fs::create_dir_all(&out_path).context("failed to create output directory")?;
-
-    let mut perf_data = out_path.join("perf.data");
+    let out_path = create_flame_output_dir(out_dir)?;
+    let perf_data = out_path.join("perf.data");
     let perf_cmd_str =
         format!("perf record -F 999 -g --call-graph dwarf -p {pid} -- sleep {duration}");
     println!("=> running: {perf_cmd_str}");
 
-    let mut perf_cmd = Command::new("perf");
-    perf_cmd
+    let perf_status = Command::new("perf")
         .arg("record")
         .args(["-F", "999", "-g", "--call-graph", "dwarf", "-p"])
         .arg(pid.to_string())
@@ -305,22 +308,22 @@ fn flame_valkey(
         .arg(duration.to_string())
         .current_dir(&out_path)
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    let perf_status = perf_cmd.status().map_err(|err| {
-        if err.kind() == ErrorKind::NotFound {
-            anyhow::anyhow!(
-                "perf not found. Install it via: sudo apt-get install linux-tools-common linux-tools-generic"
-            )
-        } else {
-            err.into()
-        }
-    })?;
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|err| {
+            if err.kind() == ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "perf not found. Install it via: sudo apt-get install linux-tools-common linux-tools-generic"
+                )
+            } else {
+                err.into()
+            }
+        })?;
     anyhow::ensure!(
         perf_status.success(),
         "perf record failed with status {perf_status}"
     );
-    perf_data = fs::canonicalize(&perf_data).unwrap_or(perf_data);
+    let perf_data = canonicalize_path(perf_data);
     println!("=> perf data saved to {}", perf_data.display());
 
     let mut script = Command::new("perf")
@@ -375,7 +378,7 @@ fn flame_valkey(
         "inferno-flamegraph failed with status {inferno_status}"
     );
 
-    let flame_svg = fs::canonicalize(&flame_svg).unwrap_or(flame_svg);
+    let flame_svg = canonicalize_path(flame_svg);
     println!("=> flamegraph written to {}", flame_svg.display());
     println!("=> open with: xdg-open {}", flame_svg.display());
     println!(
@@ -385,6 +388,135 @@ fn flame_valkey(
         "=> Also confirm Cargo.toml has debug=1 and frame pointers are enabled (set by this command)."
     );
 
+    finish_flame(child, port, pid, shutdown)
+}
+
+fn flame_macos(
+    profile: Profile,
+    port_opt: Option<u16>,
+    duration: u64,
+    out_dir: Option<String>,
+    shutdown: bool,
+    extra_args: &[String],
+) -> Result<()> {
+    build_module(profile, Some("-C force-frame-pointers=yes"))?;
+    let (child, port, so_path) = spawn_valkey(profile, port_opt, false, extra_args)?;
+    let pid = child.id();
+
+    println!("=> valkey-server PID {pid}");
+    println!("=> module path         {}", so_path.display());
+    println!("=> redis url           redis://127.0.0.1:{port}");
+
+    let out_path = create_flame_output_dir(out_dir)?;
+    let sample_name = "sample.txt";
+    let sample_path = out_path.join(sample_name);
+
+    let sample_status = Command::new("sample")
+        .arg(pid.to_string())
+        .arg(duration.to_string())
+        .arg("-file")
+        .arg(sample_name)
+        .current_dir(&out_path)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|err| {
+            if err.kind() == ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "sample not found; install Xcode Command Line Tools via xcode-select --install."
+                )
+            } else {
+                err.into()
+            }
+        })?;
+    anyhow::ensure!(
+        sample_status.success(),
+        "sample failed with status {sample_status}"
+    );
+    let sample_path = canonicalize_path(sample_path);
+    println!("=> sample output saved to {}", sample_path.display());
+
+    let sample_file = File::open(&sample_path).context("failed to open sample.txt")?;
+    let mut collapse = Command::new("inferno-collapse-sample")
+        .stdin(Stdio::from(sample_file))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|err| {
+            if err.kind() == ErrorKind::NotFound {
+                inferno_missing(&sample_path)
+            } else {
+                err.into()
+            }
+        })?;
+
+    let collapse_stdout = collapse
+        .stdout
+        .take()
+        .context("failed to capture inferno-collapse-sample stdout")?;
+
+    let flame_svg = out_path.join("flame.svg");
+    let flame_file = File::create(&flame_svg).context("failed to create flame.svg")?;
+    let inferno = Command::new("inferno-flamegraph")
+        .stdin(Stdio::from(collapse_stdout))
+        .stdout(Stdio::from(flame_file))
+        .spawn();
+
+    let mut inferno = match inferno {
+        Ok(child) => child,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            let _ = collapse.kill();
+            let _ = collapse.wait();
+            let _ = fs::remove_file(&flame_svg);
+            return Err(inferno_missing(&sample_path));
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    let inferno_status = inferno.wait()?;
+    let collapse_status = collapse.wait()?;
+    anyhow::ensure!(
+        collapse_status.success(),
+        "inferno-collapse-sample failed with status {collapse_status}"
+    );
+    anyhow::ensure!(
+        inferno_status.success(),
+        "inferno-flamegraph failed with status {inferno_status}"
+    );
+
+    let flame_svg = canonicalize_path(flame_svg);
+    println!("=> flamegraph written to {}", flame_svg.display());
+    println!("=> open with: open {}", flame_svg.display());
+    println!("=> sample.txt retained at {}", sample_path.display());
+
+    finish_flame(child, port, pid, shutdown)
+}
+
+fn create_flame_output_dir(out_dir: Option<String>) -> Result<PathBuf> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let default_dir = Path::new("target")
+        .join("flame")
+        .join(timestamp.to_string());
+    let out_path = out_dir.map(PathBuf::from).unwrap_or(default_dir);
+    fs::create_dir_all(&out_path).context("failed to create output directory")?;
+    Ok(out_path)
+}
+
+fn canonicalize_path(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn inferno_missing(sample_path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "inferno-flamegraph (or inferno-collapse-sample) not found. Install via cargo install inferno. sample.txt saved at {}",
+        sample_path.display()
+    )
+}
+
+fn finish_flame(mut child: Child, port: u16, pid: u32, shutdown: bool) -> Result<()> {
     if shutdown {
         let status = Command::new("valkey-cli")
             .arg("-p")
