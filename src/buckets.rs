@@ -12,7 +12,146 @@ pub enum BucketRef {
     Handle(BucketId),
 }
 
-pub type Bucket = Vec<MemberId>;
+#[derive(Debug, Default)]
+pub struct Bucket {
+    data: Vec<MemberId>,
+    head: usize,
+    len: usize,
+}
+
+impl Bucket {
+    fn with_capacity(min_cap: usize) -> Self {
+        Self {
+            data: Vec::with_capacity(min_cap),
+            head: 0,
+            len: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
+    fn as_slice(&self) -> &[MemberId] {
+        let start = self.head;
+        let end = start + self.len;
+        debug_assert!(end <= self.data.len(), "bucket window out of bounds");
+        &self.data[start..end]
+    }
+
+    fn insert_at(&mut self, pos: usize, member: MemberId) {
+        debug_assert!(pos <= self.len, "insert position out of bounds");
+        if pos == 0 && self.head > 0 {
+            self.head -= 1;
+            self.len += 1;
+            self.data[self.head] = member;
+            return;
+        }
+
+        let idx = self.head + pos;
+        if idx == self.data.len() {
+            self.data.push(member);
+        } else {
+            self.data.insert(idx, member);
+        }
+        self.len += 1;
+    }
+
+    fn remove_at(&mut self, pos: usize) -> MemberId {
+        debug_assert!(pos < self.len, "remove position out of bounds");
+        if pos == 0 {
+            let idx = self.head;
+            let value = self.data[idx];
+            self.head += 1;
+            self.len -= 1;
+            return value;
+        }
+
+        let idx = self.head + pos;
+        if pos + 1 == self.len {
+            let value = self.data[idx];
+            self.len -= 1;
+            let new_total = self.head + self.len;
+            self.data.truncate(new_total);
+            value
+        } else {
+            self.len -= 1;
+            self.data.remove(idx)
+        }
+    }
+
+    fn drain_front(&mut self, k: usize) -> usize {
+        let take = k.min(self.len);
+        if take == 0 {
+            return 0;
+        }
+        self.head += take;
+        self.len -= take;
+        take
+    }
+
+    fn drain_back(&mut self, k: usize) -> usize {
+        let take = k.min(self.len);
+        if take == 0 {
+            return 0;
+        }
+        self.len -= take;
+        let new_total = self.head + self.len;
+        self.data.truncate(new_total);
+        take
+    }
+
+    fn maybe_compact(&mut self, shrink_threshold: usize) -> isize {
+        if self.len == 0 {
+            self.data.clear();
+            self.head = 0;
+            return 0;
+        }
+
+        let cap_before = self.data.capacity();
+        let total_len = self.data.len();
+        debug_assert!(self.head <= total_len, "bucket head beyond buffer");
+        debug_assert!(
+            self.head + self.len <= total_len,
+            "bucket window exceeds buffer"
+        );
+
+        let should_compact =
+            self.head > 0 && (self.head > total_len / 2 || self.len <= shrink_threshold);
+        let should_shrink = self.len <= shrink_threshold;
+
+        if should_compact {
+            let end = self.head + self.len;
+            if self.len > 0 {
+                self.data.copy_within(self.head..end, 0);
+            }
+            self.data.truncate(self.len);
+            self.head = 0;
+        } else if should_shrink {
+            let new_total = self.head + self.len;
+            self.data.truncate(new_total);
+        } else {
+            return 0;
+        }
+
+        self.data.shrink_to_fit();
+        let cap_after = self.data.capacity();
+        if cap_after < cap_before {
+            let bytes = (cap_before - cap_after) * size_of::<MemberId>();
+            -isize::try_from(bytes).expect("bucket shrink delta overflow")
+        } else {
+            0
+        }
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct BucketStore {
@@ -46,12 +185,12 @@ impl BucketStore {
                 .get_mut(id as usize)
                 .expect("reused bucket id out of bounds");
             debug_assert!(slot.is_none(), "reused bucket slot must be empty");
-            *slot = Some(Vec::with_capacity(min_cap));
+            *slot = Some(Bucket::with_capacity(min_cap));
             id
         } else {
             let idx = self.buckets.len();
             let id = BucketId::try_from(idx).expect("too many buckets allocated");
-            self.buckets.push(Some(Vec::with_capacity(min_cap)));
+            self.buckets.push(Some(Bucket::with_capacity(min_cap)));
             id
         }
     }
@@ -111,10 +250,13 @@ impl BucketStore {
         let cap_before = bucket.capacity();
         let spilled_before = cap_before > 0;
         let member_name = cmp_name(member);
-        match bucket.binary_search_by(|&m| cmp_name(m).cmp(member_name)) {
+        match bucket
+            .as_slice()
+            .binary_search_by(|&m| cmp_name(m).cmp(member_name))
+        {
             Ok(pos) => (false, 0, spilled_before, bucket.capacity() > 0, pos),
             Err(pos) => {
-                bucket.insert(pos, member);
+                bucket.insert_at(pos, member);
                 let cap_after = bucket.capacity();
                 let delta = if cap_after > cap_before {
                     let bytes = (cap_after - cap_before) * size_of::<MemberId>();
@@ -137,9 +279,12 @@ impl BucketStore {
         F: Fn(MemberId) -> &'a str,
     {
         let bucket = self.bucket_mut(id);
-        match bucket.binary_search_by(|&m| cmp_name(m).cmp(name)) {
+        match bucket
+            .as_slice()
+            .binary_search_by(|&m| cmp_name(m).cmp(name))
+        {
             Ok(pos) => {
-                bucket.remove(pos);
+                bucket.remove_at(pos);
                 (true, 0, bucket.is_empty())
             }
             Err(_) => (false, 0, false),
@@ -154,7 +299,7 @@ impl BucketStore {
             .expect("invalid bucket id");
         let bucket = slot.take().expect("bucket must exist");
         debug_assert_eq!(bucket.len(), 1, "take_singleton requires len == 1");
-        let member = bucket[0];
+        let member = bucket.as_slice()[0];
         let spilled_bytes = bucket.capacity() * size_of::<MemberId>();
         let delta = if spilled_bytes == 0 {
             0
@@ -186,19 +331,7 @@ impl BucketStore {
 
     pub fn maybe_shrink(&mut self, id: BucketId, threshold: usize) -> isize {
         let bucket = self.bucket_mut(id);
-        if bucket.len() <= threshold {
-            let cap_before = bucket.capacity();
-            bucket.shrink_to_fit();
-            let cap_after = bucket.capacity();
-            if cap_after < cap_before {
-                let bytes = (cap_before - cap_after) * size_of::<MemberId>();
-                -isize::try_from(bytes).expect("bucket shrink delta overflow")
-            } else {
-                0
-            }
-        } else {
-            0
-        }
+        bucket.maybe_compact(threshold)
     }
 
     pub fn capacity_bytes(&self, id: BucketId) -> usize {
@@ -218,11 +351,10 @@ impl BucketStore {
         let remaining;
         {
             let bucket = self.bucket_mut(id);
-            let take = k.min(bucket.len());
+            let take = bucket.drain_front(k);
             if take == 0 {
                 return (false, 0);
             }
-            bucket.drain(0..take);
             remaining = bucket.len();
         }
 
@@ -247,12 +379,10 @@ impl BucketStore {
         let remaining;
         {
             let bucket = self.bucket_mut(id);
-            let take = k.min(bucket.len());
+            let take = bucket.drain_back(k);
             if take == 0 {
                 return (false, 0);
             }
-            let new_len = bucket.len().saturating_sub(take);
-            bucket.truncate(new_len);
             remaining = bucket.len();
         }
 

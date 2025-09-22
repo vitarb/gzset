@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use gzset::ScoreSet;
 
 fn bench_pop(c: &mut Criterion) {
@@ -38,6 +38,30 @@ fn bench_pop(c: &mut Criterion) {
                 set.insert(0.0, m);
             }
             let _ = set.pop_all(false);
+        })
+    });
+    group.bench_function("pop_min_n1_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
+            }
+            for _ in 0..100 {
+                let popped = set.pop_n(true, 1);
+                black_box(&popped);
+            }
+        })
+    });
+    group.bench_function("pop_max_n1_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
+            }
+            for _ in 0..100 {
+                let popped = set.pop_n(false, 1);
+                black_box(&popped);
+            }
         })
     });
     group.finish();
