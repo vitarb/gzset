@@ -82,6 +82,23 @@ where
     }
 }
 
+#[cfg(any(feature = "reply-double", reply_double_default))]
+#[inline]
+unsafe fn reply_with_score(raw: *mut raw::RedisModuleCtx, score: f64) {
+    RedisModule_ReplyWithDouble.unwrap()(raw, score);
+}
+
+#[cfg(not(any(feature = "reply-double", reply_double_default)))]
+#[inline]
+unsafe fn reply_with_score(raw: *mut raw::RedisModuleCtx, score: f64) {
+    with_fmt_buf(|b| {
+        let s = fmt_f64(b, score);
+        unsafe {
+            RedisModule_ReplyWithStringBuffer.unwrap()(raw, s.as_ptr().cast(), s.len());
+        }
+    });
+}
+
 macro_rules! redis_command {
     (
         $ctx:expr,
@@ -240,6 +257,25 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         }
         count = c as usize;
     }
+    if count == 1 {
+        let popped = with_set_write(ctx, key, |set| set.pop_one(min))?;
+        return match popped {
+            None => Ok(RedisValue::Null),
+            Some((member, score)) => {
+                let raw = ctx.get_raw();
+                unsafe {
+                    RedisModule_ReplyWithArray.unwrap()(raw, 2);
+                    RedisModule_ReplyWithStringBuffer.unwrap()(
+                        raw,
+                        member.as_ptr().cast(),
+                        member.len(),
+                    );
+                    reply_with_score(raw, score);
+                }
+                Ok(RedisValue::NoReply)
+            }
+        };
+    }
     let emitted = with_set_write(ctx, key, |set| {
         if set.is_empty() {
             return None;
@@ -252,7 +288,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         set.pop_n_visit(min, count, |name, score| {
             unsafe {
                 RedisModule_ReplyWithStringBuffer.unwrap()(raw, name.as_ptr().cast(), name.len());
-                RedisModule_ReplyWithDouble.unwrap()(raw, score);
+                reply_with_score(raw, score);
             }
             pairs += 1;
         });

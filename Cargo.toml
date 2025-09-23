@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "GPU accelerated learned sorted set module for Valkey/Redis"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -49,10 +50,12 @@ which = "4"
 criterion = "0.5"
 
 [features]
+default = []
 bench = []
 mem_profile = []
 redis-module = []
 fast-hash = []
+reply-double = []
 
 [profile.release]
 debug = 1
