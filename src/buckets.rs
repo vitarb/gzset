@@ -16,7 +16,6 @@ pub enum BucketRef {
 pub struct Bucket {
     data: Vec<MemberId>,
     head: usize,
-    len: usize,
 }
 
 impl Bucket {
@@ -24,35 +23,37 @@ impl Bucket {
         Self {
             data: Vec::with_capacity(min_cap),
             head: 0,
-            len: 0,
         }
     }
 
     fn len(&self) -> usize {
-        self.len
+        self.data.len().saturating_sub(self.head)
     }
 
     fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
     fn capacity(&self) -> usize {
         self.data.capacity()
     }
 
+    fn head(&self) -> usize {
+        self.head
+    }
+
     fn as_slice(&self) -> &[MemberId] {
-        let start = self.head;
-        let end = start + self.len;
-        debug_assert!(end <= self.data.len(), "bucket window out of bounds");
-        &self.data[start..end]
+        debug_assert!(self.head <= self.data.len(), "bucket head beyond buffer");
+        &self.data[self.head..]
     }
 
     fn insert_at(&mut self, pos: usize, member: MemberId) {
-        debug_assert!(pos <= self.len, "insert position out of bounds");
+        let len = self.len();
+        debug_assert!(pos <= len, "insert position out of bounds");
         if pos == 0 && self.head > 0 {
-            self.head -= 1;
-            self.len += 1;
-            self.data[self.head] = member;
+            let new_head = self.head - 1;
+            self.data[new_head] = member;
+            self.head = new_head;
             return;
         }
 
@@ -62,55 +63,78 @@ impl Bucket {
         } else {
             self.data.insert(idx, member);
         }
-        self.len += 1;
     }
 
     fn remove_at(&mut self, pos: usize) -> MemberId {
-        debug_assert!(pos < self.len, "remove position out of bounds");
+        let len = self.len();
+        debug_assert!(pos < len, "remove position out of bounds");
         if pos == 0 {
             let idx = self.head;
             let value = self.data[idx];
             self.head += 1;
-            self.len -= 1;
+            if self.head >= self.data.len() {
+                self.data.clear();
+                self.head = 0;
+            }
             return value;
         }
 
         let idx = self.head + pos;
-        if pos + 1 == self.len {
-            let value = self.data[idx];
-            self.len -= 1;
-            let new_total = self.head + self.len;
-            self.data.truncate(new_total);
+        if pos + 1 == len {
+            debug_assert_eq!(idx + 1, self.data.len(), "tail removal must pop last");
+            let value = self
+                .data
+                .pop()
+                .expect("bucket len tracked pop requires element");
+            if self.head >= self.data.len() {
+                self.data.clear();
+                self.head = 0;
+            }
             value
         } else {
-            self.len -= 1;
             self.data.remove(idx)
         }
     }
 
-    fn drain_front(&mut self, k: usize) -> usize {
-        let take = k.min(self.len);
+    fn advance_front(&mut self, k: usize) -> usize {
+        let len = self.len();
+        let take = k.min(len);
         if take == 0 {
             return 0;
         }
         self.head += take;
-        self.len -= take;
+        if self.head >= self.data.len() {
+            self.data.clear();
+            self.head = 0;
+        }
         take
     }
 
     fn drain_back(&mut self, k: usize) -> usize {
-        let take = k.min(self.len);
+        let len = self.len();
+        let take = k.min(len);
         if take == 0 {
             return 0;
         }
-        self.len -= take;
-        let new_total = self.head + self.len;
-        self.data.truncate(new_total);
+        let new_len = self.data.len() - take;
+        self.data.truncate(new_len);
+        if self.head >= self.data.len() {
+            self.data.clear();
+            self.head = 0;
+        }
         take
     }
 
+    fn compact_head(&mut self) {
+        if self.head > 0 {
+            debug_assert!(self.head <= self.data.len(), "bucket head beyond data len");
+            self.data.drain(..self.head);
+            self.head = 0;
+        }
+    }
+
     fn maybe_compact(&mut self, shrink_threshold: usize) -> isize {
-        if self.len == 0 {
+        if self.is_empty() {
             self.data.clear();
             self.head = 0;
             return 0;
@@ -118,31 +142,22 @@ impl Bucket {
 
         let cap_before = self.data.capacity();
         let total_len = self.data.len();
+        let len = self.len();
         debug_assert!(self.head <= total_len, "bucket head beyond buffer");
-        debug_assert!(
-            self.head + self.len <= total_len,
-            "bucket window exceeds buffer"
-        );
 
-        let should_compact =
-            self.head > 0 && (self.head > total_len / 2 || self.len <= shrink_threshold);
-        let should_shrink = self.len <= shrink_threshold;
-
+        let should_compact = self.head > 0
+            && (self.head >= shrink_threshold
+                || len <= shrink_threshold
+                || self.head > total_len / 2);
         if should_compact {
-            let end = self.head + self.len;
-            if self.len > 0 {
-                self.data.copy_within(self.head..end, 0);
-            }
-            self.data.truncate(self.len);
-            self.head = 0;
-        } else if should_shrink {
-            let new_total = self.head + self.len;
-            self.data.truncate(new_total);
-        } else {
-            return 0;
+            self.compact_head();
         }
 
-        self.data.shrink_to_fit();
+        let len_after = self.len();
+        if len_after <= shrink_threshold {
+            self.data.shrink_to_fit();
+        }
+
         let cap_after = self.data.capacity();
         if cap_after < cap_before {
             let bytes = (cap_before - cap_after) * size_of::<MemberId>();
@@ -342,7 +357,7 @@ impl BucketStore {
         self.bucket(id).len()
     }
 
-    pub fn drain_front_k(
+    pub fn advance_front_k(
         &mut self,
         id: BucketId,
         k: usize,
@@ -351,9 +366,12 @@ impl BucketStore {
         let remaining;
         {
             let bucket = self.bucket_mut(id);
-            let take = bucket.drain_front(k);
+            let take = bucket.advance_front(k);
             if take == 0 {
                 return (false, 0);
+            }
+            if !bucket.is_empty() && bucket.head() >= shrink_threshold {
+                bucket.compact_head();
             }
             remaining = bucket.len();
         }
@@ -368,6 +386,16 @@ impl BucketStore {
             let delta = self.maybe_shrink(id, shrink_threshold);
             (false, delta)
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn drain_front_k(
+        &mut self,
+        id: BucketId,
+        k: usize,
+        shrink_threshold: usize,
+    ) -> (bool, isize) {
+        self.advance_front_k(id, k, shrink_threshold)
     }
 
     pub fn drain_back_k(
