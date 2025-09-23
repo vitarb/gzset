@@ -456,10 +456,22 @@ fn flame_macos(
             err.into()
         }
     })?;
+    #[cfg(target_os = "macos")]
+    let sample_interrupted = {
+        use std::os::unix::process::ExitStatusExt;
+
+        sample_status.signal() == Some(libc::SIGINT)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let sample_interrupted = false;
+
     anyhow::ensure!(
-        sample_status.success(),
+        sample_status.success() || sample_interrupted,
         "sample failed with status {sample_status}"
     );
+    if sample_interrupted {
+        println!("=> sample interrupted by Ctrl-C; generating flamegraph from partial profile");
+    }
     let sample_path = canonicalize_path(sample_path);
     println!("=> sample output saved to {}", sample_path.display());
 
