@@ -62,6 +62,50 @@ server already listening on 6379.
 
 ---
 
+### Profiling with perf (Linux)
+
+```bash
+# 1) Generate a flamegraph for 20s while you drive load (in another shell)
+cargo valkey-flame --duration 20
+
+# 2) In a separate shell, drive a workload (example):
+valkey-cli -p 6379 <<'EOS'
+GZADD s 0 a
+# … add data, then pop …
+EOS
+
+# Output: target/flame/<timestamp>/flame.svg
+# Open it with your browser or: xdg-open target/flame/<timestamp>/flame.svg
+
+
+Requires: perf and inferno-flamegraph (cargo install inferno).
+```
+
+macOS is supported too via Apple's `sample` profiler; see below.
+
+### Profiling with sample (macOS)
+
+```bash
+# 1) Generate a flamegraph for 20s while you drive load (in another shell)
+cargo valkey-flame --duration 20
+
+# 2) In a separate shell, drive a workload (example):
+valkey-cli -p 6379 <<'EOS'
+GZADD s 0 a
+# … add data, then pop …
+EOS
+
+# Output: target/flame/<timestamp>/flame.svg
+# Open it with:
+open target/flame/<timestamp>/flame.svg
+
+
+Requires: Xcode Command Line Tools (xcode-select --install) and inferno (cargo install inferno).
+The task enables frame pointers and includes debug symbols for clear call stacks.
+```
+
+---
+
 ## Building & testing
 
 | Command                      | Purpose                                           |

@@ -54,3 +54,6 @@ mem_profile = []
 redis-module = []
 fast-hash = []
 
+[profile.release]
+debug = 1
+
