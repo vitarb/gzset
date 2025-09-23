@@ -319,8 +319,8 @@ fn flame_linux(
         perf_cmd.arg("--").arg("sleep").arg(duration.to_string());
     }
 
-    let perf_status = perf_cmd
-        .status()
+    let mut perf_child = perf_cmd
+        .spawn()
         .map_err(|err| {
             if err.kind() == ErrorKind::NotFound {
                 anyhow::anyhow!(
@@ -330,6 +330,7 @@ fn flame_linux(
                 err.into()
             }
         })?;
+    let perf_status = wait_ignoring_ctrl_c(&mut perf_child)?;
     let perf_interrupted = was_interrupted_by_ctrl_c(&perf_status);
     anyhow::ensure!(
         perf_status.success() || perf_interrupted,
@@ -453,7 +454,7 @@ fn flame_macos(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let sample_status = sample_cmd.status().map_err(|err| {
+    let mut sample_child = sample_cmd.spawn().map_err(|err| {
         if err.kind() == ErrorKind::NotFound {
             anyhow::anyhow!(
                 "sample not found; install Xcode Command Line Tools via xcode-select --install."
@@ -462,6 +463,7 @@ fn flame_macos(
             err.into()
         }
     })?;
+    let sample_status = wait_ignoring_ctrl_c(&mut sample_child)?;
     let sample_interrupted = was_interrupted_by_ctrl_c(&sample_status);
 
     anyhow::ensure!(
@@ -545,6 +547,44 @@ fn create_flame_output_dir(out_dir: Option<String>) -> Result<PathBuf> {
 
 fn canonicalize_path(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(unix)]
+fn wait_ignoring_ctrl_c(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    struct SigintGuard {
+        previous: libc::sighandler_t,
+    }
+
+    impl SigintGuard {
+        fn new() -> std::io::Result<Self> {
+            unsafe {
+                let previous = libc::signal(libc::SIGINT, libc::SIG_IGN);
+                if previous == libc::SIG_ERR {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(Self { previous })
+                }
+            }
+        }
+    }
+
+    impl Drop for SigintGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = libc::signal(libc::SIGINT, self.previous);
+            }
+        }
+    }
+
+    let guard = SigintGuard::new()?;
+    let status = child.wait();
+    drop(guard);
+    status
+}
+
+#[cfg(not(unix))]
+fn wait_ignoring_ctrl_c(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    child.wait()
 }
 
 #[cfg(unix)]
