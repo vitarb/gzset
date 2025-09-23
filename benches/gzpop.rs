@@ -64,6 +64,30 @@ fn bench_pop(c: &mut Criterion) {
             }
         })
     });
+    group.bench_function("pop_min_one_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
+            }
+            for _ in 0..100 {
+                let popped = set.pop_one(true);
+                black_box(&popped);
+            }
+        })
+    });
+    group.bench_function("pop_max_one_same_score", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (_, m) in &entries {
+                set.insert(0.0, m);
+            }
+            for _ in 0..100 {
+                let popped = set.pop_one(false);
+                black_box(&popped);
+            }
+        })
+    });
     group.finish();
 }
 
