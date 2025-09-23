@@ -76,9 +76,9 @@ enum Cmd {
         /// Optional fixed port. If omitted an unused one is picked automatically.
         #[arg(long)]
         port: Option<u16>,
-        /// Seconds to record with perf
-        #[arg(long, default_value_t = 20)]
-        duration: u64,
+        /// Seconds to record with perf. Omit to record until the profiler stops.
+        #[arg(long)]
+        duration: Option<u64>,
         /// Output directory (svg will be written here as flame.svg)
         #[arg(long)]
         out_dir: Option<String>,
@@ -256,7 +256,7 @@ fn start_valkey(
 fn flame_valkey(
     profile: Profile,
     port_opt: Option<u16>,
-    duration: u64,
+    duration: Option<u64>,
     out_dir: Option<String>,
     shutdown: bool,
     extra_args: &[String],
@@ -280,7 +280,7 @@ fn flame_valkey(
 fn flame_linux(
     profile: Profile,
     port_opt: Option<u16>,
-    duration: u64,
+    duration: Option<u64>,
     out_dir: Option<String>,
     shutdown: bool,
     extra_args: &[String],
@@ -295,20 +295,31 @@ fn flame_linux(
 
     let out_path = create_flame_output_dir(out_dir)?;
     let perf_data = out_path.join("perf.data");
-    let perf_cmd_str =
-        format!("perf record -F 999 -g --call-graph dwarf -p {pid} -- sleep {duration}");
+    if duration.is_none() {
+        println!("=> recording until perf is terminated (press Ctrl-C to stop)");
+    }
+
+    let perf_cmd_str = if let Some(duration) = duration {
+        format!("perf record -F 999 -g --call-graph dwarf -p {pid} -- sleep {duration}")
+    } else {
+        "perf record -F 999 -g --call-graph dwarf -p {pid}".to_string()
+    };
     println!("=> running: {perf_cmd_str}");
 
-    let perf_status = Command::new("perf")
+    let mut perf_cmd = Command::new("perf");
+    perf_cmd
         .arg("record")
         .args(["-F", "999", "-g", "--call-graph", "dwarf", "-p"])
         .arg(pid.to_string())
-        .arg("--")
-        .arg("sleep")
-        .arg(duration.to_string())
         .current_dir(&out_path)
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    if let Some(duration) = duration {
+        perf_cmd.arg("--").arg("sleep").arg(duration.to_string());
+    }
+
+    let perf_status = perf_cmd
         .status()
         .map_err(|err| {
             if err.kind() == ErrorKind::NotFound {
@@ -394,7 +405,7 @@ fn flame_linux(
 fn flame_macos(
     profile: Profile,
     port_opt: Option<u16>,
-    duration: u64,
+    duration: Option<u64>,
     out_dir: Option<String>,
     shutdown: bool,
     extra_args: &[String],
@@ -411,24 +422,38 @@ fn flame_macos(
     let sample_name = "sample.txt";
     let sample_path = out_path.join(sample_name);
 
-    let sample_status = Command::new("sample")
-        .arg(pid.to_string())
-        .arg(duration.to_string())
+    if duration.is_none() {
+        println!("=> sampling until sample is terminated (press Ctrl-C to stop)");
+    }
+
+    let sample_cmd_str = if let Some(duration) = duration {
+        format!("sample {pid} {duration} -file {sample_name}")
+    } else {
+        format!("sample {pid} -file {sample_name}")
+    };
+    println!("=> running: {sample_cmd_str}");
+
+    let mut sample_cmd = Command::new("sample");
+    sample_cmd.arg(pid.to_string());
+    if let Some(duration) = duration {
+        sample_cmd.arg(duration.to_string());
+    }
+    sample_cmd
         .arg("-file")
         .arg(sample_name)
         .current_dir(&out_path)
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(|err| {
-            if err.kind() == ErrorKind::NotFound {
-                anyhow::anyhow!(
-                    "sample not found; install Xcode Command Line Tools via xcode-select --install."
-                )
-            } else {
-                err.into()
-            }
-        })?;
+        .stderr(Stdio::inherit());
+
+    let sample_status = sample_cmd.status().map_err(|err| {
+        if err.kind() == ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "sample not found; install Xcode Command Line Tools via xcode-select --install."
+            )
+        } else {
+            err.into()
+        }
+    })?;
     anyhow::ensure!(
         sample_status.success(),
         "sample failed with status {sample_status}"
