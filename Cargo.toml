@@ -41,6 +41,8 @@ ahash = "0.8"
 clap = { version = "4", features = ["derive"] }
 portpicker = "0.1"
 redis = "0.25"
+libc = "0.2"
+signal-hook = "0.3"
 heck = "0.5"
 rand = "0.8"
 

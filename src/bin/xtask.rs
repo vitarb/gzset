@@ -1,5 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+#[cfg(unix)]
+use signal_hook::{consts::signal::SIGINT, low_level, SigId};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     env,
     fs::{self, File},
@@ -319,8 +323,8 @@ fn flame_linux(
         perf_cmd.arg("--").arg("sleep").arg(duration.to_string());
     }
 
-    let perf_status = perf_cmd
-        .status()
+    let mut perf_child = perf_cmd
+        .spawn()
         .map_err(|err| {
             if err.kind() == ErrorKind::NotFound {
                 anyhow::anyhow!(
@@ -330,10 +334,17 @@ fn flame_linux(
                 err.into()
             }
         })?;
+    let perf_status = wait_allowing_ctrl_c(&mut perf_child)?;
+    let perf_interrupted = was_interrupted_by_ctrl_c(&perf_status);
     anyhow::ensure!(
-        perf_status.success(),
+        perf_status.success() || perf_interrupted,
         "perf record failed with status {perf_status}"
     );
+    if perf_interrupted {
+        println!(
+            "=> perf record interrupted by Ctrl-C; generating flamegraph from partial profile"
+        );
+    }
     let perf_data = canonicalize_path(perf_data);
     println!("=> perf data saved to {}", perf_data.display());
 
@@ -447,7 +458,7 @@ fn flame_macos(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    let sample_status = sample_cmd.status().map_err(|err| {
+    let mut sample_child = sample_cmd.spawn().map_err(|err| {
         if err.kind() == ErrorKind::NotFound {
             anyhow::anyhow!(
                 "sample not found; install Xcode Command Line Tools via xcode-select --install."
@@ -456,10 +467,16 @@ fn flame_macos(
             err.into()
         }
     })?;
+    let sample_status = wait_allowing_ctrl_c(&mut sample_child)?;
+    let sample_interrupted = was_interrupted_by_ctrl_c(&sample_status);
+
     anyhow::ensure!(
-        sample_status.success(),
+        sample_status.success() || sample_interrupted,
         "sample failed with status {sample_status}"
     );
+    if sample_interrupted {
+        println!("=> sample interrupted by Ctrl-C; generating flamegraph from partial profile");
+    }
     let sample_path = canonicalize_path(sample_path);
     println!("=> sample output saved to {}", sample_path.display());
 
@@ -534,6 +551,63 @@ fn create_flame_output_dir(out_dir: Option<String>) -> Result<PathBuf> {
 
 fn canonicalize_path(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(unix)]
+static PARENT_SIGINT: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+struct CtrlcGuard {
+    id: SigId,
+}
+
+#[cfg(unix)]
+impl CtrlcGuard {
+    fn install() -> Result<Self> {
+        PARENT_SIGINT.store(false, Ordering::SeqCst);
+        let handler = || {
+            if PARENT_SIGINT.swap(true, Ordering::SeqCst) {
+                unsafe { libc::_exit(128 + libc::SIGINT) };
+            }
+        };
+        let id = unsafe { low_level::register(SIGINT, handler) }
+            .context("failed to install temporary SIGINT handler")?;
+        Ok(Self { id })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CtrlcGuard {
+    fn drop(&mut self) {
+        low_level::unregister(self.id);
+        PARENT_SIGINT.store(false, Ordering::SeqCst);
+    }
+}
+
+#[cfg(unix)]
+fn wait_allowing_ctrl_c(child: &mut Child) -> Result<std::process::ExitStatus> {
+    let guard = CtrlcGuard::install()?;
+    let status = child.wait();
+    drop(guard);
+    let status = status?;
+    Ok(status)
+}
+
+#[cfg(not(unix))]
+fn wait_allowing_ctrl_c(child: &mut Child) -> Result<std::process::ExitStatus> {
+    Ok(child.wait()?)
+}
+
+#[cfg(unix)]
+fn was_interrupted_by_ctrl_c(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.signal() == Some(libc::SIGINT) || status.code() == Some(128 + libc::SIGINT)
+}
+
+#[cfg(not(unix))]
+fn was_interrupted_by_ctrl_c(_status: &std::process::ExitStatus) -> bool {
+    false
 }
 
 fn inferno_missing(sample_path: &Path) -> anyhow::Error {
