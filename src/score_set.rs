@@ -1153,7 +1153,7 @@ impl ScoreSet {
                     emitted += popped_here;
 
                     let (now_empty, mut bucket_delta) = if min {
-                        self.bucket_store.drain_front_k(
+                        self.bucket_store.advance_front_k(
                             bucket_id,
                             popped_here,
                             BUCKET_SHRINK_THRESHOLD,
@@ -1798,5 +1798,117 @@ mod tests {
     #[test]
     fn bucket_shrink_updates_mem_on_max_pop() {
         bucket_shrink_mem_on_pop(false);
+    }
+
+    #[test]
+    fn repeated_min_pops_from_single_bucket() {
+        let mut set = ScoreSet::default();
+        let total = super::BUCKET_SHRINK_THRESHOLD * 8;
+        let names: Vec<String> = (0..total).map(|i| format!("member-{i:05}")).collect();
+        for name in &names {
+            assert!(set.insert(1.0, name));
+        }
+
+        let score_key = OrderedFloat(1.0);
+        let bucket_ref = *set
+            .by_score
+            .get(&score_key)
+            .expect("bucket should exist after inserts");
+        let bucket_id = match bucket_ref {
+            BucketRef::Handle(id) => id,
+            BucketRef::Inline1(_) => panic!("bucket must spill for repeated pops"),
+        };
+        let initial_bucket_bytes = set.bucket_store.capacity_bytes(bucket_id);
+        assert!(
+            initial_bucket_bytes > super::BUCKET_SHRINK_THRESHOLD * size_of::<MemberId>(),
+            "expected spilled capacity before pops",
+        );
+
+        let mut expected_index = 0usize;
+        let mut prev_bucket_bytes = set.debug_mem_breakdown().buckets;
+
+        while expected_index < total {
+            let mut popped_name = None;
+            let emitted = set.pop_n_visit(true, 1, |name, score| {
+                assert_eq!(score, 1.0);
+                popped_name = Some(name.to_owned());
+            });
+            if emitted == 0 {
+                break;
+            }
+            let name = popped_name.expect("pop should emit a member");
+            assert_eq!(
+                name, names[expected_index],
+                "unexpected member order after {expected_index} pops",
+            );
+            expected_index += 1;
+
+            let remaining = total - expected_index;
+            assert_eq!(set.len(), remaining, "len mismatch after pops");
+
+            let buckets_bytes = set.debug_mem_breakdown().buckets;
+            assert!(
+                buckets_bytes <= prev_bucket_bytes,
+                "bucket usage should be non-increasing",
+            );
+            prev_bucket_bytes = buckets_bytes;
+
+            if remaining == 0 {
+                assert!(!set.by_score.contains_key(&score_key));
+                assert_eq!(buckets_bytes, 0);
+                break;
+            }
+
+            if remaining == 1 {
+                let entry = set
+                    .by_score
+                    .get(&score_key)
+                    .copied()
+                    .expect("score entry must exist while remaining members > 0");
+                assert!(matches!(entry, BucketRef::Inline1(_)));
+                assert_eq!(buckets_bytes, 0);
+            } else {
+                let entry = set
+                    .by_score
+                    .get(&score_key)
+                    .copied()
+                    .expect("score entry must exist while remaining members > 1");
+                match entry {
+                    BucketRef::Handle(id) => {
+                        let cap_bytes = set.bucket_store.capacity_bytes(id);
+                        if remaining > super::BUCKET_SHRINK_THRESHOLD {
+                            assert_eq!(
+                                cap_bytes, initial_bucket_bytes,
+                                "capacity should remain until shrink threshold",
+                            );
+                        } else {
+                            assert!(
+                                cap_bytes <= super::BUCKET_SHRINK_THRESHOLD * size_of::<MemberId>(),
+                                "capacity should shrink near threshold",
+                            );
+                        }
+                        assert_eq!(
+                            buckets_bytes, cap_bytes,
+                            "bucket accounting should match capacity",
+                        );
+                    }
+                    BucketRef::Inline1(_) => {
+                        panic!("bucket should remain spilled while more than one member remains");
+                    }
+                }
+            }
+
+            if remaining > 0 {
+                let next_name = &names[expected_index];
+                assert_eq!(
+                    set.rank(next_name),
+                    Some(0),
+                    "next member should stay at front",
+                );
+            }
+        }
+
+        assert_eq!(expected_index, total);
+        assert!(set.is_empty());
     }
 }
