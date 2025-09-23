@@ -65,8 +65,8 @@ server already listening on 6379.
 ### Profiling with perf (Linux)
 
 ```bash
-# 1) Generate a flamegraph for 20s while you drive load (in another shell)
-cargo valkey-flame --duration 20
+# 1) Generate a flamegraph while you drive load (press Ctrl-C when done, or pass --duration to stop automatically)
+cargo valkey-flame
 
 # 2) In a separate shell, drive a workload (example):
 valkey-cli -p 6379 <<'EOS'
@@ -86,8 +86,8 @@ macOS is supported too via Apple's `sample` profiler; see below.
 ### Profiling with sample (macOS)
 
 ```bash
-# 1) Generate a flamegraph for 20s while you drive load (in another shell)
-cargo valkey-flame --duration 20
+# 1) Generate a flamegraph while you drive load (press Ctrl-C when done, or pass --duration to stop automatically)
+cargo valkey-flame
 
 # 2) In a separate shell, drive a workload (example):
 valkey-cli -p 6379 <<'EOS'
