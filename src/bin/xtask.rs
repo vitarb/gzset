@@ -422,22 +422,24 @@ fn flame_macos(
     let sample_name = "sample.txt";
     let sample_path = out_path.join(sample_name);
 
+    // sample(1) defaults to 10s; use a long duration so Ctrl-C stops it instead.
+    const DEFAULT_SAMPLE_DURATION: u64 = 999_999;
+    let sample_duration = duration.unwrap_or(DEFAULT_SAMPLE_DURATION);
     if duration.is_none() {
         println!("=> sampling until sample is terminated (press Ctrl-C to stop)");
     }
 
-    let sample_cmd_str = if let Some(duration) = duration {
-        format!("sample {pid} {duration} -file {sample_name}")
+    let sample_cmd_suffix = if duration.is_none() {
+        " (Ctrl-C to stop)"
     } else {
-        format!("sample {pid} -file {sample_name}")
+        ""
     };
-    println!("=> running: {sample_cmd_str}");
+    println!("=> running: sample {pid} {sample_duration} -file {sample_name}{sample_cmd_suffix}");
 
     let mut sample_cmd = Command::new("sample");
-    sample_cmd.arg(pid.to_string());
-    if let Some(duration) = duration {
-        sample_cmd.arg(duration.to_string());
-    }
+    sample_cmd
+        .arg(pid.to_string())
+        .arg(sample_duration.to_string());
     sample_cmd
         .arg("-file")
         .arg(sample_name)
