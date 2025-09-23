@@ -2,8 +2,8 @@ use crate::format::{fmt_f64, with_fmt_buf};
 use crate::{score_set::ScoreSet, FastHashMap};
 use ordered_float::OrderedFloat;
 use redis_module::raw::{
-    RedisModule_ReplySetArrayLength, RedisModule_ReplyWithArray, RedisModule_ReplyWithStringBuffer,
-    REDISMODULE_POSTPONED_ARRAY_LEN,
+    RedisModule_ReplySetArrayLength, RedisModule_ReplyWithArray, RedisModule_ReplyWithDouble,
+    RedisModule_ReplyWithNull, RedisModule_ReplyWithStringBuffer, REDISMODULE_POSTPONED_ARRAY_LEN,
 };
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::convert::TryFrom;
@@ -252,17 +252,8 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         set.pop_n_visit(min, count, |name, score| {
             unsafe {
                 RedisModule_ReplyWithStringBuffer.unwrap()(raw, name.as_ptr().cast(), name.len());
+                RedisModule_ReplyWithDouble.unwrap()(raw, score);
             }
-            with_fmt_buf(|b| {
-                let formatted = fmt_f64(b, score);
-                unsafe {
-                    RedisModule_ReplyWithStringBuffer.unwrap()(
-                        raw,
-                        formatted.as_ptr().cast(),
-                        formatted.len(),
-                    );
-                }
-            });
             pairs += 1;
         });
         unsafe { RedisModule_ReplySetArrayLength.unwrap()(raw, (pairs * 2) as c_long) };
@@ -407,26 +398,29 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
     Ok(result)
 }
 
-fn gzmscore(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzmscore(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
     let key = args[1].try_as_str()?;
     let members: Vec<_> = args[2..].iter().map(|m| m.try_as_str().unwrap()).collect();
-    let mut out = Vec::new();
-    with_set_read(_ctx, key, |set| {
-        for m in &members {
-            if let Some(score) = set.score(m) {
-                with_fmt_buf(|b| out.push(fmt_f64(b, score).to_owned().into()));
-            } else {
-                out.push(RedisValue::Null);
+    let raw = ctx.get_raw();
+    unsafe { RedisModule_ReplyWithArray.unwrap()(raw, members.len() as c_long) };
+    with_set_read(ctx, key, |set| {
+        for member in &members {
+            unsafe {
+                if let Some(score) = set.score(member) {
+                    RedisModule_ReplyWithDouble.unwrap()(raw, score);
+                } else {
+                    RedisModule_ReplyWithNull.unwrap()(raw);
+                }
             }
         }
     })?;
-    Ok(RedisValue::Array(out))
+    Ok(RedisValue::NoReply)
 }
 
-fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzunion(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
@@ -441,7 +435,7 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
     for k in keys {
-        with_set_read(_ctx, k, |set| {
+        with_set_read(ctx, k, |set| {
             agg.reserve(set.len());
             for (member, score) in set.iter_all() {
                 if let Some(v) = agg.get_mut(member) {
@@ -454,15 +448,18 @@ fn gzunion(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let mut items: Vec<_> = agg.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
-    let mut out = Vec::new();
-    for (m, s) in items {
-        out.push(m.into());
-        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
+    let raw = ctx.get_raw();
+    unsafe { RedisModule_ReplyWithArray.unwrap()(raw, (items.len() * 2) as c_long) };
+    for (member, score) in items {
+        unsafe {
+            RedisModule_ReplyWithStringBuffer.unwrap()(raw, member.as_ptr().cast(), member.len());
+            RedisModule_ReplyWithDouble.unwrap()(raw, score);
+        }
     }
-    Ok(RedisValue::Array(out))
+    Ok(RedisValue::NoReply)
 }
 
-fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzinter(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
@@ -476,15 +473,15 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut keys_vec: Vec<_> = keys.clone();
-    keys_vec.sort_by_key(|k| with_set_read(_ctx, k, |s| s.len()).unwrap());
+    keys_vec.sort_by_key(|k| with_set_read(ctx, k, |s| s.len()).unwrap());
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
-    with_set_read(_ctx, keys_vec[0], |s| -> rm::RedisResult<()> {
+    with_set_read(ctx, keys_vec[0], |s| -> rm::RedisResult<()> {
         agg.reserve(s.len());
         for (m, sc) in s.iter_all() {
             let mut sum = sc;
             let mut present = true;
             for k in &keys_vec[1..] {
-                match with_set_read(_ctx, k, |set| set.score(m))? {
+                match with_set_read(ctx, k, |set| set.score(m))? {
                     Some(other_sc) => sum += other_sc,
                     None => {
                         present = false;
@@ -500,15 +497,18 @@ fn gzinter(_ctx: &Context, args: Vec<RedisString>) -> Result {
     })??;
     let mut items: Vec<_> = agg.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
-    let mut out = Vec::new();
-    for (m, s) in items {
-        out.push(m.into());
-        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
+    let raw = ctx.get_raw();
+    unsafe { RedisModule_ReplyWithArray.unwrap()(raw, (items.len() * 2) as c_long) };
+    for (member, score) in items {
+        unsafe {
+            RedisModule_ReplyWithStringBuffer.unwrap()(raw, member.as_ptr().cast(), member.len());
+            RedisModule_ReplyWithDouble.unwrap()(raw, score);
+        }
     }
-    Ok(RedisValue::Array(out))
+    Ok(RedisValue::NoReply)
 }
 
-fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
+fn gzdiff(ctx: &Context, args: Vec<RedisString>) -> Result {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
@@ -522,12 +522,12 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
     }
     let keys: Vec<_> = args[2..].iter().map(|k| k.try_as_str().unwrap()).collect();
     let mut diff: FastHashMap<String, f64> = FastHashMap::default();
-    with_set_read(_ctx, keys[0], |s| -> rm::RedisResult<()> {
+    with_set_read(ctx, keys[0], |s| -> rm::RedisResult<()> {
         diff.reserve(s.len());
         for (m, sc) in s.iter_all() {
             let mut found = false;
             for &k in &keys[1..] {
-                if with_set_read(_ctx, k, |set| set.contains(m))? {
+                if with_set_read(ctx, k, |set| set.contains(m))? {
                     found = true;
                     break;
                 }
@@ -540,12 +540,15 @@ fn gzdiff(_ctx: &Context, args: Vec<RedisString>) -> Result {
     })??;
     let mut items: Vec<_> = diff.into_iter().collect();
     items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then_with(|| a.0.cmp(&b.0)));
-    let mut out = Vec::new();
-    for (m, s) in items {
-        out.push(m.into());
-        with_fmt_buf(|b| out.push(fmt_f64(b, s).to_owned().into()));
+    let raw = ctx.get_raw();
+    unsafe { RedisModule_ReplyWithArray.unwrap()(raw, (items.len() * 2) as c_long) };
+    for (member, score) in items {
+        unsafe {
+            RedisModule_ReplyWithStringBuffer.unwrap()(raw, member.as_ptr().cast(), member.len());
+            RedisModule_ReplyWithDouble.unwrap()(raw, score);
+        }
     }
-    Ok(RedisValue::Array(out))
+    Ok(RedisValue::NoReply)
 }
 
 fn gzintercard(_ctx: &Context, args: Vec<RedisString>) -> Result {
