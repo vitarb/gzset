@@ -330,10 +330,16 @@ fn flame_linux(
                 err.into()
             }
         })?;
+    let perf_interrupted = was_interrupted_by_ctrl_c(&perf_status);
     anyhow::ensure!(
-        perf_status.success(),
+        perf_status.success() || perf_interrupted,
         "perf record failed with status {perf_status}"
     );
+    if perf_interrupted {
+        println!(
+            "=> perf record interrupted by Ctrl-C; generating flamegraph from partial profile"
+        );
+    }
     let perf_data = canonicalize_path(perf_data);
     println!("=> perf data saved to {}", perf_data.display());
 
@@ -456,10 +462,15 @@ fn flame_macos(
             err.into()
         }
     })?;
+    let sample_interrupted = was_interrupted_by_ctrl_c(&sample_status);
+
     anyhow::ensure!(
-        sample_status.success(),
+        sample_status.success() || sample_interrupted,
         "sample failed with status {sample_status}"
     );
+    if sample_interrupted {
+        println!("=> sample interrupted by Ctrl-C; generating flamegraph from partial profile");
+    }
     let sample_path = canonicalize_path(sample_path);
     println!("=> sample output saved to {}", sample_path.display());
 
@@ -534,6 +545,18 @@ fn create_flame_output_dir(out_dir: Option<String>) -> Result<PathBuf> {
 
 fn canonicalize_path(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(unix)]
+fn was_interrupted_by_ctrl_c(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.signal() == Some(libc::SIGINT) || status.code() == Some(128 + libc::SIGINT)
+}
+
+#[cfg(not(unix))]
+fn was_interrupted_by_ctrl_c(_status: &std::process::ExitStatus) -> bool {
+    false
 }
 
 fn inferno_missing(sample_path: &Path) -> anyhow::Error {

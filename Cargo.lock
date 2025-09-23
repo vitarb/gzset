@@ -468,6 +468,7 @@ dependencies = [
  "criterion",
  "hashbrown",
  "heck 0.5.0",
+ "libc",
  "once_cell",
  "ordered-float",
  "portpicker",
