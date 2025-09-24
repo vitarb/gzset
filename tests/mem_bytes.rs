@@ -1,8 +1,17 @@
-use gzset::ScoreSet;
+use gzset::{MemberId, ScoreSet};
+use std::mem::size_of;
 use std::os::raw::c_void;
 
 extern "C" {
     fn gzset_mem_usage(value: *const c_void) -> usize;
+}
+
+const fn size_class(bytes: usize) -> usize {
+    if bytes <= 512 {
+        (bytes + 7) & !7
+    } else {
+        bytes.next_power_of_two()
+    }
 }
 
 #[test]
@@ -32,11 +41,13 @@ fn mem_bytes_tracking() {
         after_mem < before_mem,
         "mem_bytes should shrink after removals: before {before_mem} after {after_mem}"
     );
-    const MAX_USAGE_GROWTH: usize = 1024;
+    let initial_bytes = total * size_of::<MemberId>();
+    let remaining_bytes = remaining * size_of::<MemberId>();
+    let allowed_growth = size_class(initial_bytes).saturating_sub(size_class(remaining_bytes));
     assert!(
         after_usage <= before_usage
-            || after_usage.saturating_sub(before_usage) <= MAX_USAGE_GROWTH,
-        "usage should not grow significantly after removals: before {before_usage} after {after_usage}",
+            || after_usage.saturating_sub(before_usage) <= allowed_growth,
+        "usage should not grow significantly after removals: before {before_usage} after {after_usage} (allowed {allowed_growth})",
     );
 
     for i in (total - remaining)..total {

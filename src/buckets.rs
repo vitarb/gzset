@@ -38,10 +38,6 @@ impl Bucket {
         self.data.capacity()
     }
 
-    fn head(&self) -> usize {
-        self.head
-    }
-
     fn as_slice(&self) -> &[MemberId] {
         debug_assert!(self.head <= self.data.len(), "bucket head beyond buffer");
         &self.data[self.head..]
@@ -133,6 +129,18 @@ impl Bucket {
         }
     }
 
+    fn should_compact(&self, shrink_threshold: usize) -> bool {
+        if self.head == 0 {
+            return false;
+        }
+
+        let total_len = self.data.len();
+        debug_assert!(self.head <= total_len, "bucket head beyond buffer");
+        let len = self.len();
+
+        len <= shrink_threshold || self.head >= shrink_threshold || self.head > total_len / 2
+    }
+
     fn maybe_compact(&mut self, shrink_threshold: usize) -> isize {
         if self.is_empty() {
             self.data.clear();
@@ -142,10 +150,9 @@ impl Bucket {
 
         let cap_before = self.data.capacity();
         let total_len = self.data.len();
-        let len = self.len();
         debug_assert!(self.head <= total_len, "bucket head beyond buffer");
 
-        if self.head >= shrink_threshold && (len <= shrink_threshold || self.head > total_len / 2) {
+        if self.should_compact(shrink_threshold) {
             self.compact_head();
         }
 
@@ -366,15 +373,8 @@ impl BucketStore {
             if take == 0 {
                 return (false, 0);
             }
-            if !bucket.is_empty() {
-                let head = bucket.head();
-                if head >= shrink_threshold {
-                    let total_len = bucket.data.len();
-                    let len = bucket.len();
-                    if len <= shrink_threshold || head > total_len / 2 {
-                        bucket.compact_head();
-                    }
-                }
+            if !bucket.is_empty() && bucket.should_compact(shrink_threshold) {
+                bucket.compact_head();
             }
             remaining = bucket.len();
         }

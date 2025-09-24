@@ -115,6 +115,31 @@ fn grow_and_shrink_bucket() {
 }
 
 #[test]
+fn compact_tail_when_head_small() {
+    const SHRINK_THRESHOLD: usize = 64;
+    let total = SHRINK_THRESHOLD + 36;
+    let mut set = ScoreSet::default();
+    let names: Vec<String> = (0..total).map(|i| format!("member-{i}")).collect();
+    for name in &names {
+        assert!(set.insert(1.0, name));
+    }
+
+    let remaining = SHRINK_THRESHOLD - 4;
+    let popped = total - remaining;
+    let removed = set.pop_n(true, popped);
+    assert_eq!(removed.len(), popped);
+
+    let cap_after = set
+        .bucket_capacity_for_test(1.0)
+        .expect("bucket should remain spilled");
+    const CAPACITY_SLOP: usize = 2;
+    assert!(
+        cap_after <= remaining + CAPACITY_SLOP,
+        "capacity should compact when tail small: {cap_after}",
+    );
+}
+
+#[test]
 fn rank_matches_naive_random() {
     let mut rng = StdRng::seed_from_u64(0);
     for _ in 0..10 {
