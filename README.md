@@ -31,7 +31,7 @@ Each `GZSET` key owns its B-tree data directly, so `MEMORY USAGE` reflects the e
 |---------------------|-------|-------|
 | Core commands       | ✅   | `GZADD / GZREM / GZRANGE / GZRANK / GZPOPMIN / GZPOPMAX …` |
 | Valkey‑side unit tests | ✅   | Runs in CI on every push |
-| RDB/AOF persistence | 🚧   | Stubbed; data is in‑memory only today |
+| RDB/AOF persistence | ❌   | Explicitly non‑persistent; keys are volatile |
 | GPU‑learned index   | ⏸   | Prototype branch retained, not in `main` |
 | Cluster support     | ❌   | Single‑node only for now |
 | MEMORY USAGE key | reports exact usage | ✅ |
