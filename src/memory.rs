@@ -1,6 +1,6 @@
 use crate::{
     buckets::{Bucket, BucketStore},
-    pool::Loc,
+    pool::IndexEntry,
     score_set::ScoreSet,
 };
 use redis_module::raw::RedisModule_MallocSize;
@@ -49,7 +49,7 @@ unsafe fn heap_size_of_score_set(set: &ScoreSet) -> usize {
         }
     }
     if set.pool.index.capacity() > 0 {
-        total += size_class(set.pool.index.capacity() * size_of::<Option<Loc>>());
+        total += size_class(set.pool.index.capacity() * size_of::<Option<IndexEntry>>());
     }
     if set.pool.free_ids.capacity() > 0 {
         total += size_class(set.pool.free_ids.capacity() * size_of::<crate::pool::MemberId>());

@@ -1221,7 +1221,7 @@ mod tests {
     use super::*;
     use crate::buckets::{Bucket, BucketRef, BucketStore};
     use crate::memory::gzset_mem_usage;
-    use crate::pool::{Loc, MemberId};
+    use crate::pool::{IndexEntry, MemberId};
     use ordered_float::OrderedFloat;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use redis_module::raw::RedisModule_MallocSize;
@@ -1256,7 +1256,7 @@ mod tests {
         }
 
         if set.pool.index.capacity() > 0 {
-            total += size_class(set.pool.index.capacity() * size_of::<Option<Loc>>());
+            total += size_class(set.pool.index.capacity() * size_of::<Option<IndexEntry>>());
         }
         if set.pool.free_ids.capacity() > 0 {
             total += size_class(set.pool.free_ids.capacity() * size_of::<MemberId>());
