@@ -347,24 +347,21 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
     let mut idx = 2usize;
     let mut count: Option<i64> = None;
     let mut with_scores = false;
-    if idx < args.len() {
-        let a = args[idx].to_string_lossy();
-        if a.eq_ignore_ascii_case("withscores") {
+    while idx < args.len() {
+        let token = args[idx].to_string_lossy();
+        if token.eq_ignore_ascii_case("withscores") {
+            if with_scores {
+                return Err(RedisError::WrongArity);
+            }
+            with_scores = true;
+            idx += 1;
+            continue;
+        }
+        if count.is_some() {
             return Err(RedisError::WrongArity);
         }
         count = Some(args[idx].parse_integer()?);
         idx += 1;
-    }
-    if idx < args.len() {
-        if args[idx]
-            .to_string_lossy()
-            .eq_ignore_ascii_case("withscores")
-        {
-            with_scores = true;
-            idx += 1;
-        } else {
-            return Err(RedisError::WrongArity);
-        }
     }
     if idx != args.len() {
         return Err(RedisError::WrongArity);
@@ -378,7 +375,10 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
                 RedisValue::Null
             });
         }
-        use rand::{seq::index::sample, thread_rng, Rng};
+        use rand::{
+            seq::{index::sample, SliceRandom},
+            thread_rng, Rng,
+        };
         use rustc_hash::FxHashSet;
         let len = s.len();
         let mut rng = thread_rng();
@@ -413,8 +413,11 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
                 } else {
                     let cnt = c as usize;
                     if cnt >= len {
-                        for (m, sc) in s.iter_all() {
-                            out.push(m.to_owned().into());
+                        let mut items: Vec<_> =
+                            s.iter_all().map(|(m, sc)| (m.to_owned(), sc)).collect();
+                        items.shuffle(&mut rng);
+                        for (m, sc) in items {
+                            out.push(m.into());
                             if with_scores {
                                 with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
                             }
@@ -432,21 +435,27 @@ fn gzrandmember(ctx: &Context, args: Vec<RedisString>) -> Result {
                             }
                         }
                     } else {
-                        let mut idxs = sample(&mut rng, len, cnt).into_vec();
-                        idxs.sort_unstable();
-                        let iter = s.iter_all().enumerate();
-                        let mut idx_iter = idxs.into_iter();
-                        let mut next_idx = idx_iter.next();
-                        for (i, (m, sc)) in iter {
-                            if Some(i) == next_idx {
-                                out.push(m.to_owned().into());
-                                if with_scores {
-                                    with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
-                                }
-                                next_idx = idx_iter.next();
-                                if next_idx.is_none() {
+                        let idxs = sample(&mut rng, len, cnt).into_vec();
+                        let mut positions: FastHashMap<usize, usize> = FastHashMap::default();
+                        positions.reserve(cnt);
+                        for (pos, idx) in idxs.iter().enumerate() {
+                            positions.insert(*idx, pos);
+                        }
+                        let mut selected: Vec<Option<(String, f64)>> = vec![None; cnt];
+                        let mut remaining = cnt;
+                        for (i, (m, sc)) in s.iter_all().enumerate() {
+                            if let Some(pos) = positions.get(&i) {
+                                selected[*pos] = Some((m.to_owned(), sc));
+                                remaining -= 1;
+                                if remaining == 0 {
                                     break;
                                 }
+                            }
+                        }
+                        for (m, sc) in selected.into_iter().flatten() {
+                            out.push(m.into());
+                            if with_scores {
+                                with_fmt_buf(|b| out.push(fmt_f64(b, sc).to_owned().into()));
                             }
                         }
                     }
