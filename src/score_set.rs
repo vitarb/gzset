@@ -10,7 +10,10 @@ use crate::buckets::{BucketRef, BucketStore};
 use crate::pool::{MemberId, StringPool};
 
 /// Buckets trim their heap capacity once they contain at most this many members.
-const BUCKET_SHRINK_THRESHOLD: usize = 4;
+const BUCKET_SHRINK_THRESHOLD: usize = 64;
+/// Local buffers for pop operations use the same inline capacity so future
+/// tuning keeps the thresholds in lockstep.
+const BUCKET_INLINE_CAPACITY: usize = BUCKET_SHRINK_THRESHOLD;
 
 const BTREE_NODE_CAP: usize = 11;
 const BTREE_NODE_HDR: usize = 48;
@@ -1047,7 +1050,7 @@ impl ScoreSet {
         }
         let mut emitted = 0usize;
         let mut prev_scores: Option<usize> = None;
-        let mut member_buffer: SmallVec<[MemberId; 64]> = SmallVec::new();
+        let mut member_buffer: SmallVec<[MemberId; BUCKET_INLINE_CAPACITY]> = SmallVec::new();
 
         while emitted < n {
             let (score_key, bucket_ref) = if min {
@@ -1839,6 +1842,11 @@ mod tests {
                             assert_eq!(
                                 cap_bytes, initial_bucket_bytes,
                                 "capacity should remain until shrink threshold",
+                            );
+                        } else if remaining == super::BUCKET_SHRINK_THRESHOLD {
+                            assert!(
+                                cap_bytes >= super::BUCKET_SHRINK_THRESHOLD * size_of::<MemberId>(),
+                                "capacity should stay at or above threshold before shrinking",
                             );
                         } else {
                             assert!(

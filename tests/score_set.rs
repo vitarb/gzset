@@ -68,14 +68,75 @@ fn duplicate_reject() {
 
 #[test]
 fn grow_and_shrink_bucket() {
+    const SHRINK_THRESHOLD: usize = 64;
+    let total = SHRINK_THRESHOLD + 5;
     let mut set = ScoreSet::default();
-    for m in ["a", "b", "c", "d", "e"] {
-        set.insert(1.0, m);
+    let names: Vec<String> = (0..total).map(|i| format!("member-{i}")).collect();
+    for name in &names {
+        assert!(set.insert(1.0, name));
     }
-    assert!(set.bucket_capacity_for_test(1.0).is_some_and(|c| c > 4));
-    set.remove("a");
-    set.remove("b");
-    assert_eq!(set.bucket_capacity_for_test(1.0), Some(3));
+
+    let initial_cap = set
+        .bucket_capacity_for_test(1.0)
+        .expect("bucket should spill");
+    assert!(
+        initial_cap > SHRINK_THRESHOLD,
+        "capacity should exceed shrink threshold after inserts",
+    );
+
+    for name in &names[..(total - SHRINK_THRESHOLD)] {
+        assert!(set.remove(name));
+    }
+
+    let cap_at_threshold = set
+        .bucket_capacity_for_test(1.0)
+        .expect("bucket should remain after removals");
+    const CAPACITY_SLOP: usize = 2;
+    assert!(
+        cap_at_threshold <= SHRINK_THRESHOLD + CAPACITY_SLOP,
+        "capacity should shrink near threshold when remaining == threshold: {cap_at_threshold}",
+    );
+
+    let next_index = total - SHRINK_THRESHOLD;
+    assert!(set.remove(&names[next_index]));
+
+    let cap_below_threshold = set
+        .bucket_capacity_for_test(1.0)
+        .expect("bucket should remain while more than one member persists");
+    assert!(
+        cap_below_threshold <= SHRINK_THRESHOLD + CAPACITY_SLOP,
+        "capacity should stay within threshold when remaining < threshold: {cap_below_threshold}",
+    );
+
+    for name in &names[(next_index + 1)..] {
+        assert!(set.remove(name));
+    }
+    assert!(set.is_empty());
+}
+
+#[test]
+fn compact_tail_when_head_small() {
+    const SHRINK_THRESHOLD: usize = 64;
+    let total = SHRINK_THRESHOLD + 36;
+    let mut set = ScoreSet::default();
+    let names: Vec<String> = (0..total).map(|i| format!("member-{i}")).collect();
+    for name in &names {
+        assert!(set.insert(1.0, name));
+    }
+
+    let remaining = SHRINK_THRESHOLD - 4;
+    let popped = total - remaining;
+    let removed = set.pop_n(true, popped);
+    assert_eq!(removed.len(), popped);
+
+    let cap_after = set
+        .bucket_capacity_for_test(1.0)
+        .expect("bucket should remain allocated during partial drain");
+    const CAPACITY_SLOP: usize = 2;
+    assert!(
+        cap_after <= remaining + CAPACITY_SLOP,
+        "capacity should compact when tail small: {cap_after}",
+    );
 }
 
 #[test]
