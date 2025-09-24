@@ -37,6 +37,12 @@ pub(crate) struct KeyEntry {
     id: MemberId,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct IndexEntry {
+    loc: Loc,
+    hash: u64,
+}
+
 // Arena parameters
 // Smaller chunks reduce worst-case slack kept in the last arena slice.
 const ARENA_CHUNK: usize = 1024 * 1024; // 1 MiB
@@ -50,8 +56,8 @@ pub struct StringPool {
     write_off: usize,   // offset into arena[write_chunk]
     // Key lookup table: compares by bytes in arena
     pub(crate) table: RawTable<KeyEntry>,
-    // id -> Loc mapping (None when freed)
-    pub(crate) index: Vec<Option<Loc>>,
+    // id -> {Loc, hash} mapping (None when freed)
+    pub(crate) index: Vec<Option<IndexEntry>>,
     // freelist of reusable ids
     pub(crate) free_ids: Vec<MemberId>,
     // Fast length (live members)
@@ -91,23 +97,20 @@ impl StringPool {
         let hash = self.hash_bytes(bytes);
         if let Some(entry) = self.table.get(hash, |entry| {
             // Compare using bytes from index[entry.id].
-            if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
-                self.loc_bytes(loc) == bytes
-            } else {
-                false
-            }
+            self.index_entry(entry.id)
+                .is_some_and(|index_entry| self.loc_bytes(index_entry.loc) == bytes)
         }) {
             return entry.id;
         }
 
         let loc = self.write_bytes(bytes);
         let id = if let Some(id) = self.free_ids.pop() {
-            self.index[id as usize] = Some(loc);
+            self.index[id as usize] = Some(IndexEntry { loc, hash });
             id
         } else {
             let idx = self.index.len();
             let id: MemberId = idx.try_into().expect("too many members in string pool");
-            self.index.push(Some(loc));
+            self.index.push(Some(IndexEntry { loc, hash }));
             id
         };
 
@@ -122,34 +125,23 @@ impl StringPool {
         let hash = self.hash_bytes(bytes);
         self.table
             .get(hash, |entry| {
-                if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
-                    self.loc_bytes(loc) == bytes
-                } else {
-                    false
-                }
+                self.index_entry(entry.id)
+                    .is_some_and(|index_entry| self.loc_bytes(index_entry.loc) == bytes)
             })
             .map(|entry| entry.id)
     }
 
     pub fn get(&self, id: MemberId) -> &str {
-        let loc = self
-            .index
-            .get(id as usize)
-            .and_then(|loc| loc.as_ref())
-            .copied()
-            .expect("invalid member id");
-        self.loc_str(loc)
+        let entry = self.index_entry(id).expect("invalid member id");
+        self.loc_str(entry.loc)
     }
 
     pub fn remove(&mut self, s: &str) -> Option<MemberId> {
         let bytes = s.as_bytes();
         let hash = self.hash_bytes(bytes);
         let id = match self.table.get(hash, |entry| {
-            if let Some(loc) = self.index.get(entry.id as usize).and_then(|opt| *opt) {
-                self.loc_bytes(loc) == bytes
-            } else {
-                false
-            }
+            self.index_entry(entry.id)
+                .is_some_and(|index_entry| self.loc_bytes(index_entry.loc) == bytes)
         }) {
             Some(entry) => entry.id,
             None => return None,
@@ -164,12 +156,9 @@ impl StringPool {
 
     pub fn remove_by_id(&mut self, id: MemberId) -> Option<usize> {
         let slot = self.index.get_mut(id as usize)?;
-        let loc = slot.take()?;
-        let (hash, len) = {
-            let bytes = self.loc_bytes(loc);
-            (self.hash_bytes(bytes), bytes.len())
-        };
-        let removed = self.table.remove_entry(hash, |entry| entry.id == id);
+        let entry = slot.take()?;
+        let len = entry.loc.len as usize;
+        let removed = self.table.remove_entry(entry.hash, |key| key.id == id);
         debug_assert!(removed.is_some(), "entry must exist when removing by id");
         self.free_ids.push(id);
         self.len -= 1;
@@ -189,11 +178,21 @@ impl StringPool {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, MemberId)> + '_ {
-        self.index.iter().enumerate().filter_map(move |(idx, loc)| {
-            let loc = loc.as_ref()?;
-            let id: MemberId = idx.try_into().expect("too many members in string pool");
-            Some((self.loc_str(*loc), id))
-        })
+        self.index
+            .iter()
+            .enumerate()
+            .filter_map(move |(idx, entry)| {
+                let entry = entry.as_ref()?;
+                let id: MemberId = idx.try_into().expect("too many members in string pool");
+                Some((self.loc_str(entry.loc), id))
+            })
+    }
+
+    fn index_entry(&self, id: MemberId) -> Option<IndexEntry> {
+        self.index
+            .get(id as usize)
+            .and_then(|slot| slot.as_ref())
+            .copied()
     }
 
     fn hash_bytes(&self, bytes: &[u8]) -> u64 {
