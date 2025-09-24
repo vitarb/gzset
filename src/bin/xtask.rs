@@ -210,7 +210,7 @@ fn spawn_valkey(
         .arg("--loadmodule")
         .arg(&so_path)
         .arg("--save")
-        .arg("") // disable RDB
+        .arg("") // disable RDB; keep gzset non-persistent in production until an RDB format exists
         .arg("--daemonize")
         .arg("no")
         .stdin(Stdio::null())

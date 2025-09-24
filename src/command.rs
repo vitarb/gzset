@@ -19,8 +19,8 @@ pub static GZSET_TYPE: rm::native_types::RedisType = rm::native_types::RedisType
     0,
     raw::RedisModuleTypeMethods {
         version: raw::REDISMODULE_TYPE_METHOD_VERSION as u64,
-        rdb_load: Some(gzset_rdb_load),
-        rdb_save: Some(gzset_rdb_save),
+        rdb_load: None,
+        rdb_save: None,
         aof_rewrite: None,
         free: Some(crate::memory::gzset_free),
         mem_usage: Some(crate::memory::gzset_mem_usage),
@@ -39,12 +39,6 @@ pub static GZSET_TYPE: rm::native_types::RedisType = rm::native_types::RedisType
         unlink2: None,
     },
 );
-
-unsafe extern "C" fn gzset_rdb_load(_io: *mut raw::RedisModuleIO, _encver: c_int) -> *mut c_void {
-    std::ptr::null_mut()
-}
-
-unsafe extern "C" fn gzset_rdb_save(_io: *mut raw::RedisModuleIO, _value: *mut c_void) {}
 
 fn with_set_write<F, R>(ctx: &Context, key: &RedisString, f: F) -> rm::RedisResult<R>
 where
