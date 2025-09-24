@@ -1,4 +1,5 @@
 use ordered_float::OrderedFloat;
+use smallvec::SmallVec;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
@@ -972,111 +973,69 @@ impl ScoreSet {
             .is_some_and(|id| self.get_score_by_id(id).is_some())
     }
 
-    pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
-        let prev_map = Self::score_map_bytes(&self.by_score);
-        let (score_key, bucket_ref) = if min {
-            let (score, bucket_ref) = self.by_score.first_key_value()?;
-            (*score, *bucket_ref)
-        } else {
-            let (score, bucket_ref) = self.by_score.last_key_value()?;
-            (*score, *bucket_ref)
-        };
-        let mut bucket_delta = 0;
-        let member_id;
-        let member_name;
-        match bucket_ref {
-            BucketRef::Inline1(mid) => {
-                member_id = mid;
-                member_name = self.pool.get(mid).to_owned();
-                self.by_score.remove(&score_key);
-            }
-            BucketRef::Handle(bucket_id) => {
-                let bucket = self.bucket_store.slice(bucket_id);
-                debug_assert!(
-                    !bucket.is_empty(),
-                    "bucket associated with score must contain members",
-                );
-                member_id = if min {
-                    bucket[0]
-                } else {
-                    *bucket.last().expect("bucket must contain member")
+    pub fn peek_pop_count(&self, min: bool, n: usize) -> usize {
+        if n == 0 || self.is_empty() {
+            return 0;
+        }
+
+        let mut remaining = n;
+        let mut total = 0usize;
+
+        if min {
+            for bucket_ref in self.by_score.values() {
+                if remaining == 0 {
+                    break;
+                }
+                let bucket_len = match bucket_ref {
+                    BucketRef::Inline1(_) => 1,
+                    BucketRef::Handle(bucket_id) => self.bucket_store.len(*bucket_id),
                 };
-                member_name = self.pool.get(member_id).to_owned();
-                let (removed, delta_remove, now_empty) =
-                    self.bucket_store
-                        .remove_by_name(bucket_id, &member_name, |m| self.pool.get(m));
-                debug_assert!(removed, "member must exist in bucket when popping");
-                bucket_delta += delta_remove;
-                if removed {
-                    if now_empty {
-                        let (freed, free_delta) = self.bucket_store.free_if_empty(bucket_id);
-                        debug_assert!(freed, "empty bucket must be freed");
-                        bucket_delta += free_delta;
-                        self.by_score.remove(&score_key);
-                    } else if self.bucket_store.len(bucket_id) == 1 {
-                        let (remaining, delta_single) = self.bucket_store.take_singleton(bucket_id);
-                        bucket_delta += delta_single;
-                        self.by_score
-                            .insert(score_key, BucketRef::Inline1(remaining));
-                    } else {
-                        bucket_delta += self
-                            .bucket_store
-                            .maybe_shrink(bucket_id, BUCKET_SHRINK_THRESHOLD);
-                    }
+                let take = bucket_len.min(remaining);
+                total += take;
+                remaining -= take;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        } else {
+            for bucket_ref in self.by_score.values().rev() {
+                if remaining == 0 {
+                    break;
+                }
+                let bucket_len = match bucket_ref {
+                    BucketRef::Inline1(_) => 1,
+                    BucketRef::Handle(bucket_id) => self.bucket_store.len(*bucket_id),
+                };
+                let take = bucket_len.min(remaining);
+                total += take;
+                remaining -= take;
+                if remaining == 0 {
+                    break;
                 }
             }
         }
-        if bucket_delta != 0 {
-            self.apply_bucket_mem_delta(bucket_delta);
-        }
 
-        let prev_scores = Self::scores_bytes(&self.scores);
-        self.clear_score_slot(member_id);
-        // Reclaim tail capacity if we popped the highest id(s).
-        self.compact_scores_tail();
-        let new_scores = Self::scores_bytes(&self.scores);
-        if new_scores >= prev_scores {
-            let delta = new_scores - prev_scores;
-            self.mem_bytes += delta;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.member_table += delta;
-            }
+        total
+    }
+
+    pub fn pop_one_visit<F>(&mut self, min: bool, mut visit: F) -> bool
+    where
+        F: FnMut(&str, f64),
+    {
+        self.pop_n_visit(min, 1, |name, score| visit(name, score)) != 0
+    }
+
+    pub fn pop_one(&mut self, min: bool) -> Option<(String, f64)> {
+        let mut out = None;
+        let popped = self.pop_one_visit(min, |name, score| {
+            out = Some((name.to_owned(), score));
+        });
+        if popped {
+            debug_assert!(out.is_some());
         } else {
-            let delta = prev_scores - new_scores;
-            self.mem_bytes -= delta;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.member_table -= delta;
-            }
+            debug_assert!(out.is_none());
         }
-
-        let name = member_name;
-        if self.pool.remove(&name).is_some() {
-            #[cfg(test)]
-            {
-                self.mem_breakdown.strings -= name.len();
-            }
-        }
-
-        let new_map = Self::score_map_bytes(&self.by_score);
-        if new_map >= prev_map {
-            let delta = new_map - prev_map;
-            self.mem_bytes += delta;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.score_map += delta;
-            }
-        } else {
-            let delta = prev_map - new_map;
-            self.mem_bytes -= delta;
-            #[cfg(test)]
-            {
-                self.mem_breakdown.score_map -= delta;
-            }
-        }
-
-        Some((name, score_key.0))
+        out
     }
 
     pub fn pop_n_visit<F>(&mut self, min: bool, n: usize, mut visit: F) -> usize
@@ -1088,7 +1047,7 @@ impl ScoreSet {
         }
         let mut emitted = 0usize;
         let mut prev_scores: Option<usize> = None;
-        let mut member_buffer: Vec<MemberId> = Vec::new();
+        let mut member_buffer: SmallVec<[MemberId; 64]> = SmallVec::new();
 
         while emitted < n {
             let (score_key, bucket_ref) = if min {
