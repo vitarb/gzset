@@ -10,7 +10,7 @@ use crate::buckets::{BucketRef, BucketStore};
 use crate::pool::{MemberId, StringPool};
 
 /// Buckets trim their heap capacity once they contain at most this many members.
-const BUCKET_SHRINK_THRESHOLD: usize = 4;
+const BUCKET_SHRINK_THRESHOLD: usize = 64;
 
 const BTREE_NODE_CAP: usize = 11;
 const BTREE_NODE_HDR: usize = 48;
@@ -1839,6 +1839,11 @@ mod tests {
                             assert_eq!(
                                 cap_bytes, initial_bucket_bytes,
                                 "capacity should remain until shrink threshold",
+                            );
+                        } else if remaining == super::BUCKET_SHRINK_THRESHOLD {
+                            assert!(
+                                cap_bytes >= super::BUCKET_SHRINK_THRESHOLD * size_of::<MemberId>(),
+                                "capacity should stay at or above threshold before shrinking",
                             );
                         } else {
                             assert!(
