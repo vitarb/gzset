@@ -129,6 +129,11 @@ impl Bucket {
         }
     }
 
+    /// Decide whether draining the head would reclaim meaningful space.
+    ///
+    /// Triggers when the live tail is small (<= `shrink_threshold`), when the
+    /// skipped prefix has grown large (>= `shrink_threshold`), or when the head
+    /// accounts for more than half of the buffer.
     fn should_compact(&self, shrink_threshold: usize) -> bool {
         if self.head == 0 {
             return false;
@@ -386,6 +391,9 @@ impl BucketStore {
         } else if remaining == 1 {
             (false, 0)
         } else {
+            // `maybe_shrink` still runs here so buckets shrink their capacity once
+            // the tail falls under the threshold, even if we already compacted
+            // above.
             let delta = self.maybe_shrink(id, shrink_threshold);
             (false, delta)
         }

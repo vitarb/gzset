@@ -131,7 +131,7 @@ fn compact_tail_when_head_small() {
 
     let cap_after = set
         .bucket_capacity_for_test(1.0)
-        .expect("bucket should remain spilled");
+        .expect("bucket should remain allocated during partial drain");
     const CAPACITY_SLOP: usize = 2;
     assert!(
         cap_after <= remaining + CAPACITY_SLOP,
