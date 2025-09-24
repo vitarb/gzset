@@ -2,8 +2,8 @@ use crate::format::{fmt_f64, with_fmt_buf};
 use crate::{score_set::ScoreSet, FastHashMap};
 use ordered_float::OrderedFloat;
 use redis_module::raw::{
-    RedisModule_ReplySetArrayLength, RedisModule_ReplyWithArray, RedisModule_ReplyWithDouble,
-    RedisModule_ReplyWithNull, RedisModule_ReplyWithStringBuffer, REDISMODULE_POSTPONED_ARRAY_LEN,
+    RedisModule_ReplyWithArray, RedisModule_ReplyWithDouble, RedisModule_ReplyWithNull,
+    RedisModule_ReplyWithStringBuffer,
 };
 use redis_module::{self as rm, raw, Context, RedisError, RedisResult, RedisString, RedisValue};
 use std::convert::TryFrom;
@@ -94,21 +94,18 @@ where
     }
 }
 
-#[cfg(any(feature = "reply-double", reply_double_default))]
 #[inline]
 unsafe fn reply_with_score(raw: *mut raw::RedisModuleCtx, score: f64) {
-    RedisModule_ReplyWithDouble.unwrap()(raw, score);
-}
-
-#[cfg(not(any(feature = "reply-double", reply_double_default)))]
-#[inline]
-unsafe fn reply_with_score(raw: *mut raw::RedisModuleCtx, score: f64) {
-    with_fmt_buf(|b| {
-        let s = fmt_f64(b, score);
-        unsafe {
-            RedisModule_ReplyWithStringBuffer.unwrap()(raw, s.as_ptr().cast(), s.len());
-        }
-    });
+    if let Some(reply_double) = RedisModule_ReplyWithDouble {
+        reply_double(raw, score);
+    } else {
+        with_fmt_buf(|b| {
+            let s = fmt_f64(b, score);
+            unsafe {
+                RedisModule_ReplyWithStringBuffer.unwrap()(raw, s.as_ptr().cast(), s.len());
+            }
+        });
+    }
 }
 
 macro_rules! redis_command {
@@ -277,32 +274,39 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
         count = c as usize;
     }
     if count == 1 {
-        let popped = with_set_write(ctx, key, |set| set.pop_one(min))?;
-        return match popped {
-            None => Ok(RedisValue::Null),
-            Some((member, score)) => {
-                let raw = ctx.get_raw();
+        let raw = ctx.get_raw();
+        let mut replied = false;
+        let popped = with_set_write(ctx, key, |set| {
+            set.pop_one_visit(min, |name, score| {
                 unsafe {
                     RedisModule_ReplyWithArray.unwrap()(raw, 2);
                     RedisModule_ReplyWithStringBuffer.unwrap()(
                         raw,
-                        member.as_ptr().cast(),
-                        member.len(),
+                        name.as_ptr().cast(),
+                        name.len(),
                     );
                     reply_with_score(raw, score);
                 }
-                Ok(RedisValue::NoReply)
-            }
+                replied = true;
+            })
+        })?;
+        return if popped {
+            debug_assert!(replied);
+            Ok(RedisValue::NoReply)
+        } else {
+            debug_assert!(!replied);
+            Ok(RedisValue::Null)
         };
     }
+    let raw = ctx.get_raw();
     let emitted = with_set_write(ctx, key, |set| {
-        if set.is_empty() {
+        let pairs_to_emit = set.peek_pop_count(min, count);
+        if pairs_to_emit == 0 {
             return None;
         }
-        let raw = ctx.get_raw();
         unsafe {
-            RedisModule_ReplyWithArray.unwrap()(raw, REDISMODULE_POSTPONED_ARRAY_LEN as c_long)
-        };
+            RedisModule_ReplyWithArray.unwrap()(raw, (pairs_to_emit * 2) as c_long);
+        }
         let mut pairs = 0usize;
         set.pop_n_visit(min, count, |name, score| {
             unsafe {
@@ -311,7 +315,7 @@ fn gzpop_generic(ctx: &Context, args: Vec<RedisString>, min: bool) -> Result {
             }
             pairs += 1;
         });
-        unsafe { RedisModule_ReplySetArrayLength.unwrap()(raw, (pairs * 2) as c_long) };
+        debug_assert_eq!(pairs, pairs_to_emit);
         Some(pairs)
     })?;
     match emitted {
