@@ -13,6 +13,8 @@ use crate::{
 
 /// Buckets trim their heap capacity once they contain at most this many members.
 const BUCKET_SHRINK_THRESHOLD: usize = 64;
+/// Buckets created from Inline1 spillover start with this many slots.
+const BUCKET_INITIAL_CAPACITY: usize = 8;
 /// Local buffers for pop operations use the same inline capacity so future
 /// tuning keeps the thresholds in lockstep.
 const BUCKET_INLINE_CAPACITY: usize = BUCKET_SHRINK_THRESHOLD;
@@ -688,8 +690,7 @@ impl ScoreSet {
         let inserted = match self.by_score.entry(key) {
             Entry::Occupied(mut entry) => match *entry.get() {
                 BucketRef::Inline1(existing_id) => {
-                    // Pre-allocate for exactly the two elements we're about to insert.
-                    let bucket_id = self.bucket_store.alloc_with(2);
+                    let bucket_id = self.bucket_store.alloc_with(BUCKET_INITIAL_CAPACITY);
                     let prealloc_bytes = self.bucket_store.capacity_bytes(bucket_id);
                     if prealloc_bytes > 0 {
                         bucket_delta +=
@@ -721,22 +722,7 @@ impl ScoreSet {
         };
 
         if inserted {
-            let new_map = Self::score_map_bytes(&self.by_score);
-            if new_map >= prev_map {
-                let delta = new_map - prev_map;
-                self.mem_bytes += delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map += delta;
-                }
-            } else {
-                let delta = prev_map - new_map;
-                self.mem_bytes -= delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map -= delta;
-                }
-            }
+            self.apply_score_map_delta(prev_map);
         }
         if bucket_delta != 0 {
             self.apply_bucket_mem_delta(bucket_delta);
@@ -1125,10 +1111,10 @@ impl ScoreSet {
                 prev_scores = Some(Self::scores_bytes(&self.scores));
             }
 
-            let prev_map = Self::score_map_bytes(&self.by_score);
             let score = score_key.0;
             match bucket_ref {
                 BucketRef::Inline1(member_id) => {
+                    let prev_map = Self::score_map_bytes(&self.by_score);
                     {
                         let name = self.pool.get(member_id);
                         visit(name, score);
@@ -1138,6 +1124,7 @@ impl ScoreSet {
                     self.account_removed_string(removed);
                     self.by_score.remove(&score_key);
                     emitted += 1;
+                    self.apply_score_map_delta(prev_map);
                 }
                 BucketRef::Handle(bucket_id) => {
                     let remaining = n - emitted;
@@ -1185,36 +1172,23 @@ impl ScoreSet {
                     };
 
                     if now_empty {
+                        let prev_map = Self::score_map_bytes(&self.by_score);
                         self.by_score.remove(&score_key);
+                        self.apply_score_map_delta(prev_map);
                     } else if self.bucket_store.len(bucket_id) == 1 {
+                        let prev_map = Self::score_map_bytes(&self.by_score);
                         let (remaining_member, delta_single) =
                             self.bucket_store.take_singleton(bucket_id);
                         bucket_delta += delta_single;
                         if let Some(entry) = self.by_score.get_mut(&score_key) {
                             *entry = BucketRef::Inline1(remaining_member);
                         }
+                        self.apply_score_map_delta(prev_map);
                     }
 
                     if bucket_delta != 0 {
                         self.apply_bucket_mem_delta(bucket_delta);
                     }
-                }
-            }
-
-            let new_map = Self::score_map_bytes(&self.by_score);
-            if new_map >= prev_map {
-                let delta = new_map - prev_map;
-                self.mem_bytes += delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map += delta;
-                }
-            } else {
-                let delta = prev_map - new_map;
-                self.mem_bytes -= delta;
-                #[cfg(test)]
-                {
-                    self.mem_breakdown.score_map -= delta;
                 }
             }
         }
@@ -1240,6 +1214,25 @@ impl ScoreSet {
         }
 
         emitted
+    }
+
+    fn apply_score_map_delta(&mut self, prev_map: usize) {
+        let new_map = Self::score_map_bytes(&self.by_score);
+        if new_map >= prev_map {
+            let delta = new_map - prev_map;
+            self.mem_bytes += delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map += delta;
+            }
+        } else {
+            let delta = prev_map - new_map;
+            self.mem_bytes -= delta;
+            #[cfg(test)]
+            {
+                self.mem_breakdown.score_map -= delta;
+            }
+        }
     }
 
     pub fn pop_n(&mut self, min: bool, n: usize) -> Vec<(String, f64)> {
