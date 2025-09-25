@@ -1,4 +1,5 @@
 use gzset::ScoreSet;
+use ordered_float::OrderedFloat;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[test]
@@ -64,6 +65,52 @@ fn duplicate_reject() {
     let mut set = ScoreSet::default();
     assert!(set.insert(1.0, "a"));
     assert!(!set.insert(1.0, "a"));
+}
+
+#[test]
+fn iter_from_skips_correctly_when_start_score_not_present() {
+    let mut set = ScoreSet::default();
+    for i in 0..10 {
+        assert!(set.insert((i * 10) as f64, &format!("m{i}")));
+    }
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(55.0), "", false)
+        .map(|(m, sc)| (m.to_owned(), sc))
+        .collect();
+    assert_eq!(got.first().map(|(_, sc)| *sc), Some(60.0));
+    assert_eq!(got.first().map(|(m, _)| m.as_str()), Some("m6"));
+}
+
+#[test]
+fn iter_from_equal_score_exclusive_inline_and_bucket() {
+    let mut set = ScoreSet::default();
+
+    assert!(set.insert(10.0, "b"));
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(10.0), "b", false)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["b"]);
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(10.0), "b", true)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert!(got.is_empty());
+
+    let names = ["a", "b", "c", "d"];
+    for name in names {
+        assert!(set.insert(20.0, name));
+    }
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(20.0), "b", false)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["b", "c", "d"]);
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(20.0), "b", true)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["c", "d"]);
 }
 
 #[test]

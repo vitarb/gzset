@@ -134,7 +134,7 @@ The GitHub Actions workflow replicates the above on *ubuntu‑latest*.
 | Command                                 | Semantics (parity with Redis)                 |
 | --------------------------------------- | --------------------------------------------- |
 | `GZADD key score member`                | Add/update a member                           |
-| `GZRANGE key start stop`                | Inclusive range by rank (no `WITHSCORES` yet) |
+| `GZRANGE key start stop [WITHSCORES]`   | Inclusive range by rank                       |
 | `GZRANK key member`                     | 0‑based rank or nil                           |
 | `GZREM key member`                      | Remove member                                 |
 | `GZSCORE key member`                    | Return score or nil                           |
@@ -149,7 +149,6 @@ escaped as `%7C`.
 
 Differences from core Redis:
 
-* `GZRANGE` currently **omits scores**. A `WITHSCORES` flag will land soon.
 * Persistence (`SAVE`, AOF) is **disabled**; data is volatile between restarts.
 
 ---
@@ -194,7 +193,7 @@ Future work will:
 
 | Milestone                         | ETA        | Details                             |
 | --------------------------------- | ---------- | ----------------------------------- |
-| Stable in‑memory B‑tree           | **Q3 ’25** | Complete persistence & `WITHSCORES` |
+| Stable in‑memory B‑tree           | **Q3 ’25** | Complete persistence                 |
 | Concurrent shard map              | Q3 ’25     | Eliminate global lock               |
 | Learned index prototype (CPU)     | Q4 ’25     | Replace B‑tree with PGM/ALEX        |
 | CUDA/ROCm offload (opt‑in)        | 2026       | GPU kernels for search / bulk load  |

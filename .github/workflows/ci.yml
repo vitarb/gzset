@@ -26,6 +26,7 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
+          components: rustfmt, clippy
       - name: Install Valkey
         run: sudo apt-get update && sudo apt-get install -y valkey-server valkey-tools
         shell: bash
