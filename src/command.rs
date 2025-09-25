@@ -175,11 +175,18 @@ fn gzrank(_ctx: &Context, args: Vec<RedisString>) -> Result {
 }
 
 fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
-    if args.len() != 4 {
+    if args.len() < 4 || args.len() > 5 {
         return Err(RedisError::WrongArity);
     }
     let key = &args[1];
     let _ = key.try_as_str()?;
+    let mut with_scores = false;
+    if args.len() == 5 {
+        with_scores = args[4].to_string_lossy().eq_ignore_ascii_case("withscores");
+        if !with_scores {
+            return Err(RedisError::WrongArity);
+        }
+    }
     let parse_index = |arg: &RedisString| -> Result<isize> {
         let x: i64 = arg.parse_integer()?;
         isize::try_from(x).map_err(|_| RedisError::Str("ERR index is out of range"))
@@ -190,25 +197,50 @@ fn gzrange(ctx: &Context, args: Vec<RedisString>) -> Result {
         let len = s.len();
         if len > 0 && start == 0 && (stop == -1 || (stop >= 0 && stop as usize == len - 1)) {
             unsafe {
-                raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), len as c_long);
-                for (m, _) in s.iter_all() {
+                let raw = ctx.get_raw();
+                let reply_len = if with_scores { len * 2 } else { len };
+                raw::RedisModule_ReplyWithArray.unwrap()(raw, reply_len as c_long);
+                for (m, score) in s.iter_all() {
                     raw::RedisModule_ReplyWithStringBuffer.unwrap()(
-                        ctx.get_raw(),
+                        raw,
                         m.as_ptr().cast(),
                         m.len(),
                     );
+                    if with_scores {
+                        with_fmt_buf(|b| {
+                            let s = fmt_f64(b, score);
+                            raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                                raw,
+                                s.as_ptr().cast(),
+                                s.len(),
+                            );
+                        });
+                    }
                 }
             }
         } else {
             let mut it = s.iter_range_fwd(start, stop);
             unsafe {
-                raw::RedisModule_ReplyWithArray.unwrap()(ctx.get_raw(), it.size_hint().0 as c_long);
-                for (m, _) in &mut it {
+                let raw = ctx.get_raw();
+                let (lower, _) = it.size_hint();
+                let reply_len = if with_scores { lower * 2 } else { lower };
+                raw::RedisModule_ReplyWithArray.unwrap()(raw, reply_len as c_long);
+                for (m, score) in &mut it {
                     raw::RedisModule_ReplyWithStringBuffer.unwrap()(
-                        ctx.get_raw(),
+                        raw,
                         m.as_ptr().cast(),
                         m.len(),
                     );
+                    if with_scores {
+                        with_fmt_buf(|b| {
+                            let s = fmt_f64(b, score);
+                            raw::RedisModule_ReplyWithStringBuffer.unwrap()(
+                                raw,
+                                s.as_ptr().cast(),
+                                s.len(),
+                            );
+                        });
+                    }
                 }
             }
         }

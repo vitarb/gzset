@@ -868,53 +868,49 @@ impl ScoreSet {
         use std::cmp::Ordering;
 
         let mut start_idx = 0usize;
-        let mut found = false;
-        for (s, bucket_ref) in &self.by_score {
-            if *s < score {
-                start_idx += match *bucket_ref {
-                    BucketRef::Inline1(_) => 1,
-                    BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
-                };
-                continue;
-            }
-            if *s == score {
-                match *bucket_ref {
+        for (_, bucket_ref) in self.by_score.range(..score) {
+            start_idx += match *bucket_ref {
+                BucketRef::Inline1(_) => 1,
+                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
+            };
+        }
+
+        let (bucket_offset, found_any) = match self.by_score.range(score..).next() {
+            None => (0usize, false),
+            Some((_, bucket_ref)) => {
+                let offset = match *bucket_ref {
                     BucketRef::Inline1(mid) => {
                         let cmp = self.pool.get(mid).cmp(member);
-                        match cmp {
-                            Ordering::Less => start_idx += 1,
-                            Ordering::Equal => {
-                                if exclusive {
-                                    start_idx += 1;
-                                }
-                            }
-                            Ordering::Greater => {}
+                        if (cmp == Ordering::Less) || (cmp == Ordering::Equal && exclusive) {
+                            1
+                        } else {
+                            0
                         }
                     }
                     BucketRef::Handle(bucket_id) => {
-                        let bucket = self.bucket_store.slice(bucket_id);
-                        let pos = match bucket.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
-                            Ok(pos) => {
+                        let slice = self.bucket_store.slice(bucket_id);
+                        let pos = match slice.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
+                            Ok(p) => {
                                 if exclusive {
-                                    pos + 1
+                                    p + 1
                                 } else {
-                                    pos
+                                    p
                                 }
                             }
-                            Err(pos) => pos,
+                            Err(p) => p,
                         };
-                        start_idx += pos;
+                        pos
                     }
-                }
-                found = true;
-            } else {
-                found = true;
+                };
+                (offset, true)
             }
-            break;
-        }
-        if !found {
-            start_idx = self.len();
-        }
+        };
+
+        let start_idx = if found_any {
+            start_idx + bucket_offset
+        } else {
+            self.len()
+        };
         let total = self.len();
         if total == 0 {
             return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
