@@ -6,8 +6,10 @@ use std::{
     mem::size_of,
 };
 
-use crate::buckets::{BucketRef, BucketStore};
-use crate::pool::{MemberId, StringPool};
+use crate::{
+    buckets::{BucketRef, BucketStore},
+    pool::{MemberId, StringPool},
+};
 
 /// Buckets trim their heap capacity once they contain at most this many members.
 const BUCKET_SHRINK_THRESHOLD: usize = 64;
