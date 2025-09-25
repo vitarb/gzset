@@ -29,6 +29,18 @@ fn bench_range(c: &mut Criterion) {
             for _ in &mut iter {}
         })
     });
+    group.bench_function("iter_from_gap_90pct", |b| {
+        b.iter(|| {
+            let mut set = ScoreSet::default();
+            for (s, m) in &entries {
+                set.insert(*s, m);
+            }
+            let start_idx = entries.len() * 9 / 10;
+            let start_score = OrderedFloat(entries[start_idx].0 + 0.5);
+            let mut iter = set.iter_from(start_score, "", false);
+            for _ in &mut iter {}
+        })
+    });
     group.finish();
 }
 

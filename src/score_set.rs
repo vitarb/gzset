@@ -230,6 +230,116 @@ impl<'a> ExactSizeIterator for RangeIterFwd<'a> {
     }
 }
 
+struct IterFromFwd<'a> {
+    pool: &'a StringPool,
+    store: &'a BucketStore,
+    outer: std::collections::btree_map::Range<'a, OrderedFloat<f64>, BucketRef>,
+    cur: Option<(std::slice::Iter<'a, MemberId>, OrderedFloat<f64>)>,
+    inline_first: Option<(&'a str, f64)>,
+}
+
+impl<'a> IterFromFwd<'a> {
+    fn new(
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
+        store: &'a BucketStore,
+        pool: &'a StringPool,
+        score: OrderedFloat<f64>,
+        member: &'a str,
+        exclusive: bool,
+    ) -> Self {
+        use std::cmp::Ordering;
+
+        let mut outer = map.range(score..);
+        let mut cur = None;
+        let mut inline_first = None;
+
+        if let Some((s_key, bucket_ref)) = outer.next() {
+            if *s_key == score {
+                match *bucket_ref {
+                    BucketRef::Inline1(mid) => {
+                        let name = pool.get(mid);
+                        let cmp = name.cmp(member);
+                        if !(cmp == Ordering::Less || (cmp == Ordering::Equal && exclusive)) {
+                            inline_first = Some((name, s_key.0));
+                        }
+                    }
+                    BucketRef::Handle(bucket_id) => {
+                        let slice = store.slice(bucket_id);
+                        if !slice.is_empty() {
+                            let pos = match slice.binary_search_by(|&m| pool.get(m).cmp(member)) {
+                                Ok(p) => {
+                                    if exclusive {
+                                        p + 1
+                                    } else {
+                                        p
+                                    }
+                                }
+                                Err(p) => p,
+                            };
+                            if pos < slice.len() {
+                                let slice = &slice[pos..];
+                                cur = Some((slice.iter(), *s_key));
+                            }
+                        }
+                    }
+                }
+            } else {
+                match *bucket_ref {
+                    BucketRef::Inline1(mid) => {
+                        let name = pool.get(mid);
+                        inline_first = Some((name, s_key.0));
+                    }
+                    BucketRef::Handle(bucket_id) => {
+                        let slice = store.slice(bucket_id);
+                        if !slice.is_empty() {
+                            cur = Some((slice.iter(), *s_key));
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            pool,
+            store,
+            outer,
+            cur,
+            inline_first,
+        }
+    }
+}
+
+impl<'a> Iterator for IterFromFwd<'a> {
+    type Item = (&'a str, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((name, score)) = self.inline_first.take() {
+            return Some((name, score));
+        }
+        loop {
+            if let Some((iter, score)) = &mut self.cur {
+                if let Some(&mid) = iter.next() {
+                    return Some((self.pool.get(mid), score.0));
+                }
+                self.cur = None;
+            }
+            let (score, bucket_ref) = self.outer.next()?;
+            match *bucket_ref {
+                BucketRef::Inline1(mid) => {
+                    return Some((self.pool.get(mid), score.0));
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let slice = self.store.slice(bucket_id);
+                    if slice.is_empty() {
+                        continue;
+                    }
+                    self.cur = Some((slice.iter(), *score));
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ScoreIter<'a> {
     pool: &'a StringPool,
@@ -865,70 +975,14 @@ impl ScoreSet {
         member: &'a str,
         exclusive: bool,
     ) -> impl Iterator<Item = (&'a str, f64)> + 'a {
-        use std::cmp::Ordering;
-
-        let mut start_idx = 0usize;
-        for (_, bucket_ref) in self.by_score.range(..score) {
-            start_idx += match *bucket_ref {
-                BucketRef::Inline1(_) => 1,
-                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
-            };
-        }
-
-        let (bucket_offset, found_any) = match self.by_score.range(score..).next() {
-            None => (0usize, false),
-            Some((_, bucket_ref)) => {
-                let offset = match *bucket_ref {
-                    BucketRef::Inline1(mid) => {
-                        let cmp = self.pool.get(mid).cmp(member);
-                        if (cmp == Ordering::Less) || (cmp == Ordering::Equal && exclusive) {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    BucketRef::Handle(bucket_id) => {
-                        let slice = self.bucket_store.slice(bucket_id);
-                        let pos = match slice.binary_search_by(|&m| self.pool.get(m).cmp(member)) {
-                            Ok(p) => {
-                                if exclusive {
-                                    p + 1
-                                } else {
-                                    p
-                                }
-                            }
-                            Err(p) => p,
-                        };
-                        pos
-                    }
-                };
-                (offset, true)
-            }
-        };
-
-        let start_idx = if found_any {
-            start_idx + bucket_offset
-        } else {
-            self.len()
-        };
-        let total = self.len();
-        if total == 0 {
-            return ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool);
-        }
-        let start = start_idx as isize;
-        let stop = total as isize - 1;
-        if start > stop {
-            ScoreIter::empty(&self.by_score, &self.bucket_store, &self.pool)
-        } else {
-            ScoreIter::new(
-                &self.by_score,
-                &self.bucket_store,
-                &self.pool,
-                start as usize,
-                stop as usize,
-                total,
-            )
-        }
+        IterFromFwd::new(
+            &self.by_score,
+            &self.bucket_store,
+            &self.pool,
+            score,
+            member,
+            exclusive,
+        )
     }
 
     #[cfg(any(test, feature = "bench"))]
