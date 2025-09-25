@@ -338,6 +338,10 @@ impl<'a> Iterator for IterFromFwd<'a> {
             }
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, None)
+    }
 }
 
 #[derive(Clone, Debug)]

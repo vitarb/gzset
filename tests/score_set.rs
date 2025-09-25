@@ -82,6 +82,38 @@ fn iter_from_skips_correctly_when_start_score_not_present() {
 }
 
 #[test]
+fn iter_from_equal_score_exclusive_inline_and_bucket() {
+    let mut set = ScoreSet::default();
+
+    assert!(set.insert(10.0, "b"));
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(10.0), "b", false)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["b"]);
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(10.0), "b", true)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert!(got.is_empty());
+
+    let names = ["a", "b", "c", "d"];
+    for name in names {
+        assert!(set.insert(20.0, name));
+    }
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(20.0), "b", false)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["b", "c", "d"]);
+    let got: Vec<_> = set
+        .iter_from(OrderedFloat(20.0), "b", true)
+        .map(|(m, _)| m.to_string())
+        .collect();
+    assert_eq!(got, ["c", "d"]);
+}
+
+#[test]
 fn grow_and_shrink_bucket() {
     const SHRINK_THRESHOLD: usize = 64;
     let total = SHRINK_THRESHOLD + 5;
