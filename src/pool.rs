@@ -40,7 +40,6 @@ pub(crate) struct KeyEntry {
 #[derive(Clone, Copy)]
 pub(crate) struct IndexEntry {
     loc: Loc,
-    hash: u64,
 }
 
 // Arena parameters
@@ -56,7 +55,7 @@ pub struct StringPool {
     write_off: usize,   // offset into arena[write_chunk]
     // Key lookup table: compares by bytes in arena
     pub(crate) table: RawTable<KeyEntry>,
-    // id -> {Loc, hash} mapping (None when freed)
+    // id -> Loc mapping (None when freed)
     pub(crate) index: Vec<Option<IndexEntry>>,
     // freelist of reusable ids
     pub(crate) free_ids: Vec<MemberId>,
@@ -105,12 +104,12 @@ impl StringPool {
 
         let loc = self.write_bytes(bytes);
         let id = if let Some(id) = self.free_ids.pop() {
-            self.index[id as usize] = Some(IndexEntry { loc, hash });
+            self.index[id as usize] = Some(IndexEntry { loc });
             id
         } else {
             let idx = self.index.len();
             let id: MemberId = idx.try_into().expect("too many members in string pool");
-            self.index.push(Some(IndexEntry { loc, hash }));
+            self.index.push(Some(IndexEntry { loc }));
             id
         };
 
@@ -157,8 +156,10 @@ impl StringPool {
     pub fn remove_by_id(&mut self, id: MemberId) -> Option<usize> {
         let slot = self.index.get_mut(id as usize)?;
         let entry = slot.take()?;
+        let bytes = self.loc_bytes(entry.loc);
+        let hash = self.hash_bytes(bytes);
         let len = entry.loc.len as usize;
-        let removed = self.table.remove_entry(entry.hash, |key| key.id == id);
+        let removed = self.table.remove_entry(hash, |key| key.id == id);
         debug_assert!(removed.is_some(), "entry must exist when removing by id");
         self.free_ids.push(id);
         self.len -= 1;
