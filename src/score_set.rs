@@ -4,6 +4,7 @@ use std::{
     collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
     mem::size_of,
+    slice, str,
 };
 
 use crate::{
@@ -1089,7 +1090,6 @@ impl ScoreSet {
         let mut emitted = 0usize;
         let mut prev_scores: Option<usize> = None;
         let mut prev_map: Option<usize> = None;
-        let mut length_changed = false;
         let mut member_buffer: SmallVec<[MemberId; BUCKET_INLINE_CAPACITY]> = SmallVec::new();
 
         while emitted < n {
@@ -1112,19 +1112,25 @@ impl ScoreSet {
             let score = score_key.0;
             match bucket_ref {
                 BucketRef::Inline1(member_id) => {
-                    let name_owned = {
+                    // Borrow the member name to visit, then retain its raw parts so we can
+                    // remove it from the pool without allocating a new string.
+                    let (name_len, name_ptr) = {
                         let name = self.pool.get(member_id);
+                        let name_len = name.len();
+                        let name_ptr = name.as_ptr();
                         visit(name, score);
-                        name.to_owned()
+                        (name_len, name_ptr)
+                    };
+                    let removed = unsafe {
+                        let name =
+                            str::from_utf8_unchecked(slice::from_raw_parts(name_ptr, name_len));
+                        self.pool.remove(name).is_some()
                     };
                     self.clear_score_slot(member_id);
-                    let name_len = name_owned.len();
-                    let removed = self.pool.remove(&name_owned).is_some();
                     self.account_removed_string(if removed { Some(name_len) } else { None });
                     if prev_map.is_none() {
                         prev_map = Some(Self::score_map_bytes(&self.by_score));
                     }
-                    length_changed = true;
                     self.by_score.remove(&score_key);
                     emitted += 1;
                 }
@@ -1147,14 +1153,21 @@ impl ScoreSet {
                     }
 
                     for &member_id in &member_buffer {
-                        let name_owned = {
+                        // Borrow the member name to visit, then retain its raw parts so we can
+                        // remove it from the pool without allocating a new string.
+                        let (name_len, name_ptr) = {
                             let name = self.pool.get(member_id);
+                            let name_len = name.len();
+                            let name_ptr = name.as_ptr();
                             visit(name, score);
-                            name.to_owned()
+                            (name_len, name_ptr)
+                        };
+                        let removed = unsafe {
+                            let name =
+                                str::from_utf8_unchecked(slice::from_raw_parts(name_ptr, name_len));
+                            self.pool.remove(name).is_some()
                         };
                         self.clear_score_slot(member_id);
-                        let name_len = name_owned.len();
-                        let removed = self.pool.remove(&name_owned).is_some();
                         self.account_removed_string(if removed { Some(name_len) } else { None });
                     }
 
@@ -1179,7 +1192,6 @@ impl ScoreSet {
                         if prev_map.is_none() {
                             prev_map = Some(Self::score_map_bytes(&self.by_score));
                         }
-                        length_changed = true;
                         self.by_score.remove(&score_key);
                     } else if self.bucket_store.len(bucket_id) == 1 {
                         let (remaining_member, delta_single) =
@@ -1197,18 +1209,17 @@ impl ScoreSet {
             }
         }
 
-        if length_changed {
+        if let Some(prev_map) = prev_map.take() {
             let new_map = Self::score_map_bytes(&self.by_score);
-            let old_map = prev_map.expect("must be set when length_changed");
-            if new_map >= old_map {
-                let delta = new_map - old_map;
+            if new_map >= prev_map {
+                let delta = new_map - prev_map;
                 self.mem_bytes += delta;
                 #[cfg(test)]
                 {
                     self.mem_breakdown.score_map += delta;
                 }
             } else {
-                let delta = old_map - new_map;
+                let delta = prev_map - new_map;
                 self.mem_bytes -= delta;
                 #[cfg(test)]
                 {
