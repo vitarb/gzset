@@ -1112,13 +1112,15 @@ impl ScoreSet {
             let score = score_key.0;
             match bucket_ref {
                 BucketRef::Inline1(member_id) => {
-                    {
+                    let name_owned = {
                         let name = self.pool.get(member_id);
                         visit(name, score);
-                    }
+                        name.to_owned()
+                    };
                     self.clear_score_slot(member_id);
-                    let removed = self.pool.remove_by_id(member_id);
-                    self.account_removed_string(removed);
+                    let name_len = name_owned.len();
+                    let removed = self.pool.remove(&name_owned).is_some();
+                    self.account_removed_string(if removed { Some(name_len) } else { None });
                     if prev_map.is_none() {
                         prev_map = Some(Self::score_map_bytes(&self.by_score));
                     }
@@ -1145,13 +1147,15 @@ impl ScoreSet {
                     }
 
                     for &member_id in &member_buffer {
-                        {
+                        let name_owned = {
                             let name = self.pool.get(member_id);
                             visit(name, score);
-                        }
+                            name.to_owned()
+                        };
                         self.clear_score_slot(member_id);
-                        let removed = self.pool.remove_by_id(member_id);
-                        self.account_removed_string(removed);
+                        let name_len = name_owned.len();
+                        let removed = self.pool.remove(&name_owned).is_some();
+                        self.account_removed_string(if removed { Some(name_len) } else { None });
                     }
 
                     let popped_here = member_buffer.len();
