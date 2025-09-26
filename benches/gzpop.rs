@@ -30,9 +30,9 @@ fn bench_pop(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(2));
     group.sample_size(10);
 
-    let entry_count_throughput = Throughput::Elements(entry_count as u64);
-
-    group.throughput(entry_count_throughput);
+    // Each call to `throughput` consumes the provided value, so construct a new
+    // Throughput for every registration.
+    group.throughput(Throughput::Elements(entry_count as u64));
     group.bench_function("pop_min", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -43,7 +43,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(entry_count_throughput);
+    group.throughput(Throughput::Elements(entry_count as u64));
     group.bench_function("pop_min_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -54,7 +54,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(entry_count_throughput);
+    group.throughput(Throughput::Elements(entry_count as u64));
     group.bench_function("pop_max", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -65,7 +65,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(entry_count_throughput);
+    group.throughput(Throughput::Elements(entry_count as u64));
     group.bench_function("pop_max_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -76,9 +76,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    let repeat_throughput = Throughput::Elements(repeat_pops as u64);
-
-    group.throughput(repeat_throughput);
+    group.throughput(Throughput::Elements(repeat_pops as u64));
     group.bench_function("pop_min_n1_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -92,7 +90,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(repeat_throughput);
+    group.throughput(Throughput::Elements(repeat_pops as u64));
     group.bench_function("pop_max_n1_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -106,7 +104,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(repeat_throughput);
+    group.throughput(Throughput::Elements(repeat_pops as u64));
     group.bench_function("pop_min_one_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -120,7 +118,7 @@ fn bench_pop(c: &mut Criterion) {
         })
     });
 
-    group.throughput(repeat_throughput);
+    group.throughput(Throughput::Elements(repeat_pops as u64));
     group.bench_function("pop_max_one_same_score", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
