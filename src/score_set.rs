@@ -1089,7 +1089,6 @@ impl ScoreSet {
         let mut emitted = 0usize;
         let mut prev_scores: Option<usize> = None;
         let mut prev_map: Option<usize> = None;
-        let mut length_changed = false;
         let mut member_buffer: SmallVec<[MemberId; BUCKET_INLINE_CAPACITY]> = SmallVec::new();
 
         while emitted < n {
@@ -1112,17 +1111,14 @@ impl ScoreSet {
             let score = score_key.0;
             match bucket_ref {
                 BucketRef::Inline1(member_id) => {
-                    {
-                        let name = self.pool.get(member_id);
-                        visit(name, score);
-                    }
+                    let name = self.pool.get(member_id);
+                    visit(name, score);
                     self.clear_score_slot(member_id);
                     let removed = self.pool.remove_by_id(member_id);
                     self.account_removed_string(removed);
                     if prev_map.is_none() {
                         prev_map = Some(Self::score_map_bytes(&self.by_score));
                     }
-                    length_changed = true;
                     self.by_score.remove(&score_key);
                     emitted += 1;
                 }
@@ -1145,10 +1141,8 @@ impl ScoreSet {
                     }
 
                     for &member_id in &member_buffer {
-                        {
-                            let name = self.pool.get(member_id);
-                            visit(name, score);
-                        }
+                        let name = self.pool.get(member_id);
+                        visit(name, score);
                         self.clear_score_slot(member_id);
                         let removed = self.pool.remove_by_id(member_id);
                         self.account_removed_string(removed);
@@ -1175,7 +1169,6 @@ impl ScoreSet {
                         if prev_map.is_none() {
                             prev_map = Some(Self::score_map_bytes(&self.by_score));
                         }
-                        length_changed = true;
                         self.by_score.remove(&score_key);
                     } else if self.bucket_store.len(bucket_id) == 1 {
                         let (remaining_member, delta_single) =
@@ -1193,18 +1186,17 @@ impl ScoreSet {
             }
         }
 
-        if length_changed {
+        if let Some(prev_map) = prev_map.take() {
             let new_map = Self::score_map_bytes(&self.by_score);
-            let old_map = prev_map.expect("must be set when length_changed");
-            if new_map >= old_map {
-                let delta = new_map - old_map;
+            if new_map >= prev_map {
+                let delta = new_map - prev_map;
                 self.mem_bytes += delta;
                 #[cfg(test)]
                 {
                     self.mem_breakdown.score_map += delta;
                 }
             } else {
-                let delta = old_map - new_map;
+                let delta = prev_map - new_map;
                 self.mem_bytes -= delta;
                 #[cfg(test)]
                 {
