@@ -28,6 +28,11 @@ name = "gzrange"
 harness = false
 required-features = ["bench"]
 
+[[bench]]
+name = "gzadd_tied"
+harness = false
+required-features = ["bench"]
+
 [dependencies]
 redis-module = "2.0.7"
 once_cell = "1"

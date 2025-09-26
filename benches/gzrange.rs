@@ -1,11 +1,18 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use std::time::Duration;
+
+use criterion::{criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use gzset::ScoreSet;
 use ordered_float::OrderedFloat;
 
 fn bench_range(c: &mut Criterion) {
     let entries: Vec<(f64, String)> = (0..1_000_000).map(|i| (i as f64, i.to_string())).collect();
     let mut group = c.benchmark_group("gzrange_iter");
+    group.measurement_time(Duration::from_secs(12));
+    group.warm_up_time(Duration::from_secs(3));
     group.sample_size(10);
+    group.sampling_mode(SamplingMode::Flat);
+
+    group.throughput(Throughput::Elements(entries.len() as u64));
     group.bench_function("iter", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -16,6 +23,9 @@ fn bench_range(c: &mut Criterion) {
             for _ in &mut iter {}
         })
     });
+    let tail_len = entries.len() - (entries.len() * 9 / 10);
+
+    group.throughput(Throughput::Elements(tail_len as u64));
     group.bench_function("iter_from_90pct", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -29,6 +39,7 @@ fn bench_range(c: &mut Criterion) {
             for _ in &mut iter {}
         })
     });
+    group.throughput(Throughput::Elements(tail_len as u64));
     group.bench_function("iter_from_90pct_hot", |b| {
         let mut set = ScoreSet::default();
         for (s, m) in &entries {
@@ -42,6 +53,7 @@ fn bench_range(c: &mut Criterion) {
             for _ in &mut iter {}
         })
     });
+    group.throughput(Throughput::Elements(tail_len as u64));
     group.bench_function("iter_from_gap_90pct", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();
@@ -54,6 +66,7 @@ fn bench_range(c: &mut Criterion) {
             for _ in &mut iter {}
         })
     });
+    group.throughput(Throughput::Elements(tail_len as u64));
     group.bench_function("iter_from_gap_90pct_hot", |b| {
         let mut set = ScoreSet::default();
         for (s, m) in &entries {
