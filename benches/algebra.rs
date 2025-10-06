@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use gzset::{FastHashMap, ScoreSet};
+use gzset::ScoreSet;
+use rustc_hash::FxHashMap as FastHashMap;
 
 mod support;
 
@@ -14,6 +17,10 @@ fn bench_algebra(c: &mut Criterion) {
     ];
 
     let mut group = c.benchmark_group("algebra");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
+    group.sampling_mode(criterion::SamplingMode::Flat);
     for (label, ratio) in overlap_cases {
         let (set_a, set_b) = two_sets_with_overlap(SET_SIZE, ratio);
         let total = (set_a.len() + set_b.len()) as u64;

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, time::Duration};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use gzset::{fmt_f64, with_fmt_buf, ScoreSet};
@@ -7,15 +7,18 @@ use rand::Rng;
 
 mod support;
 
-const SCAN_SIZE: usize = 150_000;
-const CURSOR_SAMPLES: usize = 256;
-
 fn bench_scan(c: &mut Criterion) {
-    let entries = build_scan_entries(SCAN_SIZE);
+    let scan_size = support::usize_env("GZSET_BENCH_SCAN_SIZE", 150_000);
+    let cursor_samples = support::usize_env("GZSET_BENCH_SCAN_CURSOR_SAMPLES", 256);
+    let entries = build_scan_entries(scan_size);
     let set = Box::leak(Box::new(support::build_set(&entries)));
-    let cursors = build_cursors(set);
+    let cursors = build_cursors(set, cursor_samples);
 
     let mut group = c.benchmark_group("scan");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
+    group.sampling_mode(criterion::SamplingMode::Flat);
     for &count in &[10usize, 100, 1024] {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_function(format!("count_{count}"), |b| {
@@ -42,12 +45,12 @@ fn build_scan_entries(n: usize) -> Vec<(f64, String)> {
         .collect()
 }
 
-fn build_cursors(set: &ScoreSet) -> Vec<String> {
-    let mut cursors = Vec::with_capacity(CURSOR_SAMPLES + 1);
+fn build_cursors(set: &ScoreSet, samples: usize) -> Vec<String> {
+    let mut cursors = Vec::with_capacity(samples + 1);
     cursors.push("0".to_string());
     let members = set.members_with_scores();
     let mut rng = support::seeded_rng();
-    for _ in 0..CURSOR_SAMPLES {
+    for _ in 0..samples {
         let idx = rng.gen_range(0..members.len());
         let (member, score) = &members[idx];
         cursors.push(encode_cursor(*score, member));

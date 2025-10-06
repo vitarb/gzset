@@ -7,16 +7,15 @@ use gzset::ScoreSet;
 
 mod support;
 
-const RANGE_SIZE: usize = 500_000;
-
 fn bench_range(c: &mut Criterion) {
+    let range_size = support::usize_env("GZSET_BENCH_RANGE_SIZE", 500_000);
     let datasets = [
-        ("unique_increasing", support::unique_increasing(RANGE_SIZE)),
-        ("same_score", support::same_score(RANGE_SIZE, 42.0)),
+        ("unique_increasing", support::unique_increasing(range_size)),
+        ("same_score", support::same_score(range_size, 42.0)),
     ];
 
     let mut group = c.benchmark_group("gzrange_iter");
-    group.measurement_time(Duration::from_secs(12));
+    group.measurement_time(Duration::from_secs(10));
     group.warm_up_time(Duration::from_secs(3));
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);

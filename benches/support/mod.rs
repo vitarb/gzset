@@ -21,8 +21,16 @@ static RNG_COUNTER: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
 
 static CSV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 extern "C" {
     fn gzset_mem_usage(value: *const c_void) -> usize;
+}
+
+pub fn usize_env(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 #[inline]
@@ -105,16 +113,24 @@ pub fn pick_existing(set: &ScoreSet, k: usize) -> Vec<String> {
 }
 
 pub fn mem_usage_bytes(set: &ScoreSet) -> usize {
-    unsafe { gzset_mem_usage(set as *const _ as *const c_void) }
+    #[allow(unused_unsafe)]
+    unsafe {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            let f: unsafe extern "C" fn(*const c_void) -> usize = gzset_mem_usage;
+            return f(set as *const _ as *const c_void);
+        }
+    }
+    set.mem_bytes()
 }
 
 pub fn record_memory_csv(group: &str, dataset: &str, bytes: usize) {
-    record_csv_row("memory_metrics.csv", group, dataset, bytes);
+    record_csv_row("memory.csv", group, dataset, bytes);
 }
 
 fn record_csv_row(file_name: &str, group: &str, dataset: &str, bytes: usize) {
     let _guard = CSV_LOCK.lock().unwrap();
-    let base = Path::new("target/criterion");
+    let base = Path::new("target/bench-mem");
     if let Err(err) = create_dir_all(base) {
         eprintln!("failed to create metric directory: {err}");
         return;

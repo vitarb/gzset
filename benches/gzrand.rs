@@ -1,20 +1,22 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, time::Duration};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rand::{seq::index::sample, Rng};
 use rustc_hash::FxHashSet;
 
 mod support;
-
-const RAND_SIZE: usize = 200_000;
 const COUNT_SMALL: usize = 64;
 
 fn bench_randmember(c: &mut Criterion) {
-    let entries = support::zipf_like(RAND_SIZE, 1.2);
+    let rand_size = support::usize_env("GZSET_BENCH_RAND_SIZE", 200_000);
+    let entries = support::zipf_like(rand_size, 1.2);
     let set = Box::leak(Box::new(support::build_set(&entries)));
     let len = set.len();
 
     let mut group = c.benchmark_group("randmember");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
     group.throughput(Throughput::Elements(1));
     group.bench_function("single/no_scores", |b| {
         let rng = RefCell::new(support::seeded_rng());

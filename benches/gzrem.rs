@@ -1,27 +1,28 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 mod support;
 
-const REMOVE_SIZE: usize = 150_000;
-const REMOVE_COUNT: usize = 25_000;
-
 fn bench_remove(c: &mut Criterion) {
-    let base_entries = support::unique_increasing(REMOVE_SIZE);
+    let remove_size = support::usize_env("GZSET_BENCH_REMOVE_SIZE", 150_000);
+    let remove_count = support::usize_env("GZSET_BENCH_REMOVE_COUNT", 25_000);
+    let base_entries = support::unique_increasing(remove_size);
     let mut shuffled_members: Vec<String> = base_entries
         .iter()
         .map(|(_, member)| member.clone())
         .collect();
     support::shuffle_members(&mut shuffled_members);
-    let random_targets = shuffled_members[..REMOVE_COUNT.min(shuffled_members.len())].to_vec();
+    let random_targets = shuffled_members[..remove_count.min(shuffled_members.len())].to_vec();
     let front_targets: Vec<String> = base_entries
         .iter()
-        .take(REMOVE_COUNT)
+        .take(remove_count)
         .map(|(_, m)| m.clone())
         .collect();
     let back_targets: Vec<String> = base_entries
         .iter()
         .rev()
-        .take(REMOVE_COUNT)
+        .take(remove_count)
         .map(|(_, m)| m.clone())
         .collect();
 
@@ -30,6 +31,9 @@ fn bench_remove(c: &mut Criterion) {
     record_remove_delta("cluster_back", &base_entries, &back_targets);
 
     let mut group = c.benchmark_group("remove");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
     group.throughput(Throughput::Elements(random_targets.len() as u64));
     group.bench_function("random_existing", |b| {
         b.iter_batched(

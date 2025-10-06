@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
@@ -5,16 +7,16 @@ use rand::{seq::SliceRandom, Rng};
 
 mod support;
 
-const INSERT_SIZE: usize = 200_000;
-const UPDATE_SIZE: usize = 150_000;
-const UPDATE_TOUCH: usize = 25_000;
-
 fn bench_insert(c: &mut Criterion) {
-    let unique_entries = support::unique_increasing(INSERT_SIZE);
-    let uniform_entries = support::uniform_random(INSERT_SIZE, INSERT_SIZE as f64);
-    let high_ties_entries = build_high_ties(INSERT_SIZE);
+    let insert_size = support::usize_env("GZSET_BENCH_INSERT_SIZE", 200_000);
+    let unique_entries = support::unique_increasing(insert_size);
+    let uniform_entries = support::uniform_random(insert_size, insert_size as f64);
+    let high_ties_entries = build_high_ties(insert_size);
 
     let mut group = c.benchmark_group("insert");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
     for (name, entries) in [
         ("unique_increasing", &unique_entries),
         ("uniform_random", &uniform_entries),
@@ -36,11 +38,13 @@ fn bench_insert(c: &mut Criterion) {
 }
 
 fn bench_update(c: &mut Criterion) {
-    let base_entries = support::uniform_random(UPDATE_SIZE, UPDATE_SIZE as f64);
+    let update_size = support::usize_env("GZSET_BENCH_UPDATE_SIZE", 150_000);
+    let update_touch = support::usize_env("GZSET_BENCH_UPDATE_TOUCH", 25_000);
+    let base_entries = support::uniform_random(update_size, update_size as f64);
     let mut rng = support::seeded_rng();
     let mut indices: Vec<usize> = (0..base_entries.len()).collect();
     indices.shuffle(&mut rng);
-    let touch = UPDATE_TOUCH.min(base_entries.len());
+    let touch = update_touch.min(base_entries.len());
     let mut nearby_updates = Vec::with_capacity(touch);
     let mut far_updates = Vec::with_capacity(touch);
     for &idx in indices.iter().take(touch) {
@@ -50,11 +54,14 @@ fn bench_update(c: &mut Criterion) {
             delta = 0.125;
         }
         nearby_updates.push((member.clone(), score + delta));
-        let far_target = rng.gen_range(0.0..(UPDATE_SIZE as f64 * 10.0));
+        let far_target = rng.gen_range(0.0..(update_size as f64 * 10.0));
         far_updates.push((member.clone(), far_target));
     }
 
     let mut group = c.benchmark_group("update");
+    group.measurement_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(3));
+    group.sample_size(10);
     group.throughput(Throughput::Elements(nearby_updates.len() as u64));
     group.bench_function("score_move_nearby", |b| {
         b.iter_batched(
