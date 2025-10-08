@@ -92,7 +92,7 @@ fn record_remove_delta(name: &str, entries: &[(f64, String)], removals: &[String
         let _ = set.remove(member);
     }
     let after = support::mem_usage_bytes(&set);
-    support::record_memory_csv("remove", name, before.saturating_sub(after));
+    support::record_mem(format!("remove/{name}"), before.saturating_sub(after));
 }
 
 criterion_group!(benches, bench_remove);
