@@ -32,7 +32,7 @@ fn bench_insert(c: &mut Criterion) {
         });
         let built = support::build_set(entries);
         let mem = support::mem_usage_bytes(&built);
-        support::record_memory_csv("insert", name, mem);
+        support::record_mem(format!("insert/{name}"), mem);
     }
     group.finish();
 }

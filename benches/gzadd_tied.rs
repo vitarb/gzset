@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use gzset::ScoreSet;
 
+mod support;
+
 fn bench_insert_many_ties(c: &mut Criterion) {
     let entries: Vec<(f64, String)> = (0..200_000)
         .map(|i| ((i % 1_024) as f64, format!("member:{i}")))
@@ -18,6 +20,10 @@ fn bench_insert_many_ties(c: &mut Criterion) {
         })
     });
     group.finish();
+
+    let built = support::build_set(&entries);
+    let mem = support::mem_usage_bytes(&built);
+    support::record_mem("insert_many_ties", mem);
 }
 
 criterion_group!(benches, bench_insert_many_ties);

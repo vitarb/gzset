@@ -1,14 +1,12 @@
-use std::{
-    fs::{create_dir_all, OpenOptions},
-    io::{BufWriter, Write},
-    os::raw::c_void,
-    path::Path,
-    sync::Mutex,
-};
+use std::{os::raw::c_void, sync::Mutex};
 
 use gzset::ScoreSet;
 use once_cell::sync::Lazy;
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+
+pub mod mem;
+
+pub use mem::{record_mem, record_structural_mem};
 
 static BASE_SEED: Lazy<u64> = Lazy::new(|| {
     std::env::var("GZSET_BENCH_SEED")
@@ -18,8 +16,6 @@ static BASE_SEED: Lazy<u64> = Lazy::new(|| {
 });
 
 static RNG_COUNTER: Lazy<Mutex<u64>> = Lazy::new(|| Mutex::new(0));
-
-static CSV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 extern "C" {
@@ -112,43 +108,15 @@ pub fn pick_existing(set: &ScoreSet, k: usize) -> Vec<String> {
     names
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn mem_usage_bytes(set: &ScoreSet) -> usize {
-    #[allow(unused_unsafe)]
     unsafe {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            let f: unsafe extern "C" fn(*const c_void) -> usize = gzset_mem_usage;
-            return f(set as *const _ as *const c_void);
-        }
+        let f: unsafe extern "C" fn(*const c_void) -> usize = gzset_mem_usage;
+        f(set as *const _ as *const c_void)
     }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub fn mem_usage_bytes(set: &ScoreSet) -> usize {
     set.mem_bytes()
-}
-
-pub fn record_memory_csv(group: &str, dataset: &str, bytes: usize) {
-    record_csv_row("memory.csv", group, dataset, bytes);
-}
-
-fn record_csv_row(file_name: &str, group: &str, dataset: &str, bytes: usize) {
-    let _guard = CSV_LOCK.lock().unwrap();
-    let base = Path::new("target/bench-mem");
-    if let Err(err) = create_dir_all(base) {
-        eprintln!("failed to create metric directory: {err}");
-        return;
-    }
-    let path = base.join(file_name);
-    let exists = path.exists();
-    let file = match OpenOptions::new().create(true).append(true).open(&path) {
-        Ok(file) => file,
-        Err(err) => {
-            eprintln!("failed to open metric csv {path:?}: {err}");
-            return;
-        }
-    };
-    let mut writer = BufWriter::new(file);
-    if !exists {
-        let _ = writeln!(writer, "group,dataset,bytes");
-    }
-    if let Err(err) = writeln!(writer, "{group},{dataset},{bytes}") {
-        eprintln!("failed to record metric row: {err}");
-    }
 }
