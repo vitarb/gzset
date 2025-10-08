@@ -1,4 +1,6 @@
-use std::{os::raw::c_void, sync::Mutex};
+#![allow(dead_code, unused_imports)]
+
+use std::{os::raw::c_void, sync::Mutex, time::Duration};
 
 use gzset::ScoreSet;
 use once_cell::sync::Lazy;
@@ -27,6 +29,15 @@ pub fn usize_env(name: &str, default: usize) -> usize {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(default)
+}
+
+pub fn duration_env(name: &str, default_secs: f64) -> Duration {
+    let secs = std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|value| *value >= 0.0)
+        .unwrap_or(default_secs);
+    Duration::from_secs_f64(secs)
 }
 
 #[inline]
@@ -64,7 +75,7 @@ pub fn clustered(n: usize, clusters: usize, spread: f64) -> Vec<(f64, String)> {
         }
         let remaining = n - generated;
         let clusters_left = clusters - cluster_idx;
-        let target = (remaining + clusters_left - 1) / clusters_left;
+        let target = remaining.div_ceil(clusters_left);
         let center = cluster_idx as f64 * base_gap * 10.0;
         for local in 0..target {
             let delta = rng.gen_range(-spread..=spread);
@@ -102,7 +113,10 @@ pub fn shuffle_members(members: &mut [String]) {
 
 pub fn pick_existing(set: &ScoreSet, k: usize) -> Vec<String> {
     let mut rng = seeded_rng();
-    let mut names = set.member_names();
+    let mut names: Vec<String> = set
+        .iter_all()
+        .map(|(member, _)| member.to_owned())
+        .collect();
     names.shuffle(&mut rng);
     names.truncate(names.len().min(k));
     names

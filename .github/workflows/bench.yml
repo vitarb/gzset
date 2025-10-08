@@ -10,10 +10,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           profile: minimal
           override: true
-      - name: Bench
-        run: cargo bench --all --features bench
+      - name: Run benchmarks
+        env:
+          GZSET_BENCH_MEASUREMENT_SECS: "0.2"
+          GZSET_BENCH_WARMUP_SECS: "0.1"
+          GZSET_BENCH_RAND_SIZE: "500"
+          GZSET_BENCH_RANGE_SIZE: "500"
+          GZSET_BENCH_SCAN_SIZE: "500"
+          GZSET_BENCH_SCAN_CURSOR_SAMPLES: "40"
+          GZSET_BENCH_INSERT_SIZE: "500"
+          GZSET_BENCH_UPDATE_SIZE: "500"
+          GZSET_BENCH_UPDATE_TOUCH: "100"
+          GZSET_BENCH_REMOVE_SIZE: "500"
+          GZSET_BENCH_REMOVE_COUNT: "100"
+          GZSET_BENCH_LOOKUP_SIZE: "500"
+          GZSET_BENCH_QUERY_COUNT: "100"
+          BENCH_ENTRY_COUNT: "500"
+          BENCH_REPEAT_POPS: "10"
+        run: cargo bench --all
+      - name: Summarize benchmarks
+        run: .github/scripts/bench_summary.py

@@ -9,7 +9,12 @@ fn bench_insert_many_ties(c: &mut Criterion) {
         .collect();
 
     let mut group = c.benchmark_group("insert_many_ties");
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.bench_function("insert_many_ties", |b| {
         b.iter(|| {
             let mut set = ScoreSet::default();

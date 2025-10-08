@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
@@ -14,9 +12,12 @@ fn bench_insert(c: &mut Criterion) {
     let high_ties_entries = build_high_ties(insert_size);
 
     let mut group = c.benchmark_group("insert");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     for (name, entries) in [
         ("unique_increasing", &unique_entries),
         ("uniform_random", &uniform_entries),
@@ -26,7 +27,7 @@ fn bench_insert(c: &mut Criterion) {
         group.throughput(Throughput::Elements(entries.len() as u64));
         group.bench_with_input(dataset, entries, |b, data| {
             b.iter(|| {
-                let mut set = support::build_set(data);
+                let set = support::build_set(data);
                 black_box(set.len());
             });
         });
@@ -59,9 +60,12 @@ fn bench_update(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("update");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.throughput(Throughput::Elements(nearby_updates.len() as u64));
     group.bench_function("score_move_nearby", |b| {
         b.iter_batched(

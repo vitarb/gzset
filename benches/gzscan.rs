@@ -1,4 +1,4 @@
-use std::{cell::RefCell, time::Duration};
+use std::cell::RefCell;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use gzset::{fmt_f64, with_fmt_buf, ScoreSet};
@@ -15,9 +15,12 @@ fn bench_scan(c: &mut Criterion) {
     let cursors = build_cursors(set, cursor_samples);
 
     let mut group = c.benchmark_group("scan");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.sampling_mode(criterion::SamplingMode::Flat);
     for &count in &[10usize, 100, 1024] {
         group.throughput(Throughput::Elements(count as u64));
@@ -48,7 +51,10 @@ fn build_scan_entries(n: usize) -> Vec<(f64, String)> {
 fn build_cursors(set: &ScoreSet, samples: usize) -> Vec<String> {
     let mut cursors = Vec::with_capacity(samples + 1);
     cursors.push("0".to_string());
-    let members = set.members_with_scores();
+    let members: Vec<(String, f64)> = set
+        .iter_all()
+        .map(|(member, score)| (member.to_owned(), score))
+        .collect();
     let mut rng = support::seeded_rng();
     for _ in 0..samples {
         let idx = rng.gen_range(0..members.len());
