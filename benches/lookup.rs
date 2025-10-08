@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 mod support;
@@ -15,9 +13,12 @@ fn bench_lookup(c: &mut Criterion) {
         .collect();
 
     let mut group = c.benchmark_group("lookup");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.throughput(Throughput::Elements(existing.len() as u64));
     group.bench_function("rank/existing_random", |b| {
         b.iter(|| {

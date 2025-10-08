@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
+    black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkId, Criterion,
+    SamplingMode, Throughput,
 };
 use gzset::ScoreSet;
 
@@ -15,9 +14,12 @@ fn bench_range(c: &mut Criterion) {
     ];
 
     let mut group = c.benchmark_group("gzrange_iter");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.sampling_mode(SamplingMode::Flat);
 
     for (name, entries) in datasets {
@@ -28,7 +30,7 @@ fn bench_range(c: &mut Criterion) {
 }
 
 fn add_range_benches(
-    group: &mut criterion::BenchmarkGroup<'_, Criterion>,
+    group: &mut criterion::BenchmarkGroup<'_, WallTime>,
     name: &str,
     set: &ScoreSet,
 ) {

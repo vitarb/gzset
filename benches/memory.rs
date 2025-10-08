@@ -2,9 +2,11 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 mod support;
 
+type DatasetGenerator = fn(usize) -> Vec<(f64, String)>;
+
 fn bench_memory(_: &mut Criterion) {
     const SIZES: [usize; 5] = [10_000, 50_000, 100_000, 500_000, 1_000_000];
-    let datasets: [(&str, fn(usize) -> Vec<(f64, String)>); 3] = [
+    let datasets: [(&str, DatasetGenerator); 3] = [
         ("unique_increasing", support::unique_increasing),
         ("same_score", same_score_dataset),
         ("uniform_random", uniform_random_dataset),

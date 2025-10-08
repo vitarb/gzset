@@ -1,4 +1,4 @@
-use std::{cell::RefCell, time::Duration};
+use std::cell::RefCell;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rand::{seq::index::sample, Rng};
@@ -14,9 +14,12 @@ fn bench_randmember(c: &mut Criterion) {
     let len = set.len();
 
     let mut group = c.benchmark_group("randmember");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.throughput(Throughput::Elements(1));
     group.bench_function("single/no_scores", |b| {
         let rng = RefCell::new(support::seeded_rng());
@@ -57,7 +60,10 @@ fn bench_randmember(c: &mut Criterion) {
     group.bench_function("count_pos_large", |b| {
         let rng = RefCell::new(support::seeded_rng());
         b.iter(|| {
-            let sample = sample(&mut rng.borrow_mut(), len, count_large).into_vec();
+            let sample = {
+                let mut guard = rng.borrow_mut();
+                sample(&mut *guard, len, count_large).into_vec()
+            };
             let mut indices = sample.clone();
             indices.sort_unstable();
             let mut results = Vec::with_capacity(indices.len());

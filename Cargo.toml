@@ -16,57 +16,46 @@ path = "src/bin/xtask.rs"
 [[bench]]
 name = "gzpop"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "format"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzrange"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzadd_tied"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzadd"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzrem"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "lookup"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzrand"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "algebra"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "gzscan"
 harness = false
-required-features = ["bench"]
 
 [[bench]]
 name = "memory"
 harness = false
-required-features = ["bench"]
 
 [dependencies]
 redis-module = "2.0.7"

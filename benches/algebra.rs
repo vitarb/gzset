@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use gzset::ScoreSet;
 use rustc_hash::FxHashMap as FastHashMap;
@@ -17,9 +15,12 @@ fn bench_algebra(c: &mut Criterion) {
     ];
 
     let mut group = c.benchmark_group("algebra");
-    group.measurement_time(Duration::from_secs(10));
-    group.warm_up_time(Duration::from_secs(3));
-    group.sample_size(10);
+    let measurement = support::duration_env("GZSET_BENCH_MEASUREMENT_SECS", 10.0);
+    let warmup = support::duration_env("GZSET_BENCH_WARMUP_SECS", 3.0);
+    let sample_size = support::usize_env("GZSET_BENCH_SAMPLE_SIZE", 10);
+    group.measurement_time(measurement);
+    group.warm_up_time(warmup);
+    group.sample_size(sample_size);
     group.sampling_mode(criterion::SamplingMode::Flat);
     for (label, ratio) in overlap_cases {
         let (set_a, set_b) = two_sets_with_overlap(SET_SIZE, ratio);
@@ -86,7 +87,7 @@ fn two_sets_with_overlap(size: usize, ratio: f64) -> (&'static ScoreSet, &'stati
         entries_b.push((score + 0.5, member.clone()));
     }
     let mut extra_idx = 0usize;
-    let mut next_score = size as f64;
+    let next_score = size as f64;
     while entries_b.len() < size {
         entries_b.push((
             next_score + extra_idx as f64,
@@ -117,7 +118,8 @@ fn multi_set_family() -> Vec<&'static ScoreSet> {
                 "zipf" => support::zipf_like(*size, 1.3),
                 _ => unreachable!(),
             };
-            Box::leak(Box::new(support::build_set(&entries)))
+            let leaked = Box::leak(Box::new(support::build_set(&entries)));
+            &*leaked
         })
         .collect()
 }

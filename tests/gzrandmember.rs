@@ -58,12 +58,13 @@ fn gzrandmember_samples() -> redis::RedisResult<()> {
 
     // allow duplicates
     let mut saw_duplicate = false;
+    let sample_size = 60i64; // larger than the set to guarantee duplicates with replacement
     for _ in 0..20 {
         let dup_items: Vec<String> = redis::cmd("GZRANDMEMBER")
             .arg("s")
-            .arg(-5)
+            .arg(-sample_size)
             .query(&mut con)?;
-        assert_eq!(dup_items.len(), 5);
+        assert_eq!(dup_items.len() as i64, sample_size);
         for item in &dup_items {
             assert!(item.starts_with('m'));
         }
