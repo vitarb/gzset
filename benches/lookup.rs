@@ -4,7 +4,7 @@ mod support;
 
 fn bench_lookup(c: &mut Criterion) {
     let lookup_size = support::usize_env("GZSET_BENCH_LOOKUP_SIZE", 200_000);
-    let query_count = support::usize_env("GZSET_BENCH_QUERY_COUNT", 50_000);
+    let query_count = support::usize_env("GZSET_BENCH_QUERY_COUNT", 10_000);
     let entries = support::uniform_random(lookup_size, lookup_size as f64);
     let set = Box::leak(Box::new(support::build_set(&entries)));
     let existing = support::pick_existing(set, query_count);
@@ -28,6 +28,40 @@ fn bench_lookup(c: &mut Criterion) {
             }
         });
     });
+
+    #[cfg(feature = "bench-internals")]
+    let existing_handles: Vec<_> = existing
+        .iter()
+        .map(|member| {
+            set.rank_find_only(member.as_str())
+                .expect("existing member must resolve")
+        })
+        .collect();
+
+    #[cfg(feature = "bench-internals")]
+    {
+        group.throughput(Throughput::Elements(existing.len() as u64));
+        group.bench_function("rank/find_only", |b| {
+            b.iter(|| {
+                for member in &existing {
+                    let handle = set
+                        .rank_find_only(black_box(member.as_str()))
+                        .expect("existing member must resolve");
+                    black_box(handle);
+                }
+            });
+        });
+
+        group.throughput(Throughput::Elements(existing.len() as u64));
+        group.bench_function("rank/resolve_only", |b| {
+            b.iter(|| {
+                for handle in &existing_handles {
+                    let rank = set.rank_resolve_only(*handle);
+                    black_box(rank);
+                }
+            });
+        });
+    }
     group.throughput(Throughput::Elements(missing.len() as u64));
     group.bench_function("rank/missing_random", |b| {
         b.iter(|| {

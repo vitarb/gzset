@@ -11,6 +11,9 @@ pub use crate::{
     score_set::{RangeIterFwd, ScoreIter, ScoreSet},
 };
 
+#[cfg(feature = "bench-internals")]
+pub use crate::score_set::RankFind;
+
 mod buckets;
 mod command;
 mod format;
