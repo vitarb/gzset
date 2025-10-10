@@ -5,6 +5,7 @@ use rand::{seq::index::sample, Rng};
 
 mod support;
 const COUNT_SMALL: usize = 64;
+const INDEX_BATCHES: usize = 16;
 
 fn bench_randmember(c: &mut Criterion) {
     let rand_size = support::usize_env("GZSET_BENCH_RAND_SIZE", 200_000);
@@ -41,10 +42,19 @@ fn bench_randmember(c: &mut Criterion) {
     group.throughput(Throughput::Elements(COUNT_SMALL as u64));
     group.bench_function("count_pos_small", |b| {
         let mut rng = support::seeded_rng();
-        let indices = sample(&mut rng, len, COUNT_SMALL).into_vec();
+        let batches: Vec<Vec<usize>> = (0..INDEX_BATCHES)
+            .map(|_| sample(&mut rng, len, COUNT_SMALL).into_vec())
+            .collect();
+        let batch_index = RefCell::new(0usize);
         b.iter(|| {
-            for &idx in &indices {
-                black_box(set.select_by_rank(idx));
+            let batch_idx = {
+                let mut idx = batch_index.borrow_mut();
+                let current = *idx;
+                *idx = (*idx + 1) % batches.len();
+                current
+            };
+            for &rank in &batches[batch_idx] {
+                black_box(set.select_by_rank(rank));
             }
         });
     });
@@ -52,12 +62,27 @@ fn bench_randmember(c: &mut Criterion) {
     group.throughput(Throughput::Elements(count_large as u64));
     group.bench_function("count_pos_large", |b| {
         let mut rng = support::seeded_rng();
-        let indices = sample(&mut rng, len, count_large).into_vec();
-        let mut sorted_indices = indices.clone();
-        sorted_indices.sort_unstable();
+        let unique_batches: Vec<Vec<usize>> = (0..INDEX_BATCHES)
+            .map(|_| sample(&mut rng, len, count_large).into_vec())
+            .collect();
+        let sorted_batches: Vec<Vec<usize>> = unique_batches
+            .iter()
+            .map(|indices| {
+                let mut sorted = indices.clone();
+                sorted.sort_unstable();
+                sorted
+            })
+            .collect();
+        let batch_index = RefCell::new(0usize);
         b.iter(|| {
-            for &idx in &sorted_indices {
-                black_box(set.select_by_rank(idx));
+            let batch_idx = {
+                let mut idx = batch_index.borrow_mut();
+                let current = *idx;
+                *idx = (*idx + 1) % sorted_batches.len();
+                current
+            };
+            for &rank in &sorted_batches[batch_idx] {
+                black_box(set.select_by_rank(rank));
             }
         });
     });
@@ -65,10 +90,19 @@ fn bench_randmember(c: &mut Criterion) {
     group.throughput(Throughput::Elements(count_large as u64));
     group.bench_function("count_neg_with_replacement", |b| {
         let mut rng = support::seeded_rng();
-        let indices: Vec<usize> = (0..count_large).map(|_| rng.gen_range(0..len)).collect();
+        let batches: Vec<Vec<usize>> = (0..INDEX_BATCHES)
+            .map(|_| (0..count_large).map(|_| rng.gen_range(0..len)).collect())
+            .collect();
+        let batch_index = RefCell::new(0usize);
         b.iter(|| {
-            for &idx in &indices {
-                black_box(set.select_by_rank(idx));
+            let batch_idx = {
+                let mut idx = batch_index.borrow_mut();
+                let current = *idx;
+                *idx = (*idx + 1) % batches.len();
+                current
+            };
+            for &rank in &batches[batch_idx] {
+                black_box(set.select_by_rank(rank));
             }
         });
     });
