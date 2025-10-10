@@ -57,6 +57,18 @@ harness = false
 name = "memory"
 harness = false
 
+[[bench]]
+name = "gztopk"
+harness = false
+
+[[bench]]
+name = "gzchurn"
+harness = false
+
+[[bench]]
+name = "gzstring"
+harness = false
+
 [dependencies]
 redis-module = "2.0.7"
 once_cell = "1"
