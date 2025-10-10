@@ -86,6 +86,7 @@ mem_profile = []
 redis-module = []
 fast-hash = []
 reply-double = []
+bench-internals = []
 
 [profile.release]
 debug = 1

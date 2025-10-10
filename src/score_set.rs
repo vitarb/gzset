@@ -44,6 +44,17 @@ pub struct ScoreSet {
     mem_breakdown: MemBreakdown,
 }
 
+#[cfg(feature = "bench-internals")]
+#[derive(Clone, Copy, Debug)]
+/// Benchmark-only handle exposing the result of the rank lookup path.
+///
+/// This type is available exclusively when the `bench-internals` feature is
+/// enabled and is not part of the public API surface.
+pub struct RankFind {
+    score_key: OrderedFloat<f64>,
+    pos: usize,
+}
+
 impl Default for ScoreSet {
     fn default() -> Self {
         Self {
@@ -829,6 +840,49 @@ impl ScoreSet {
     pub fn score(&self, member: &str) -> Option<f64> {
         let id = self.pool.lookup(member)?;
         self.get_score_by_id(id)
+    }
+
+    #[cfg(feature = "bench-internals")]
+    #[inline]
+    /// Benchmark helper that performs the member lookup without computing the
+    /// global rank. Available only when the `bench-internals` feature is
+    /// enabled.
+    pub fn rank_find_only(&self, member: &str) -> Option<RankFind> {
+        let id = self.pool.lookup(member)?;
+        let score_key = OrderedFloat(self.get_score_by_id(id)?);
+        let bucket_ref = *self.by_score.get(&score_key)?;
+        let pos = match bucket_ref {
+            BucketRef::Inline1(mid) => {
+                if mid == id {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            BucketRef::Handle(bucket_id) => self
+                .bucket_store
+                .slice(bucket_id)
+                .binary_search_by(|&m| self.pool.get(m).cmp(member))
+                .ok(),
+        }?;
+        Some(RankFind { score_key, pos })
+    }
+
+    #[cfg(feature = "bench-internals")]
+    #[inline]
+    /// Benchmark helper that resolves the global rank from a [`RankFind`]
+    /// produced by [`Self::rank_find_only`]. Available only when the
+    /// `bench-internals` feature is enabled.
+    pub fn rank_resolve_only(&self, find: RankFind) -> usize {
+        let prefix = self
+            .by_score
+            .range(..find.score_key)
+            .map(|(_, bref)| match *bref {
+                BucketRef::Inline1(_) => 1,
+                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
+            })
+            .sum::<usize>();
+        prefix + find.pos
     }
 
     pub fn rank(&self, member: &str) -> Option<usize> {
