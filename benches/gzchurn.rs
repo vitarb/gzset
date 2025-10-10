@@ -15,6 +15,10 @@ fn bench_churn(c: &mut Criterion) {
 
     let base_entries = support::uniform_random(base_size, base_size as f64 * 4.0);
     let script = build_script(&base_entries, script_len);
+    let updates_near_script =
+        build_updates_only_script(&base_entries, script_len, UpdateDelta::Near);
+    let updates_far_script = build_updates_only_script(&base_entries, script_len, UpdateDelta::Far);
+    let removes_only_script = build_removes_only_script(&base_entries, script_len);
 
     let mut group = c.benchmark_group("churn");
     group.measurement_time(measurement);
@@ -34,6 +38,48 @@ fn bench_churn(c: &mut Criterion) {
         );
     });
 
+    if !updates_near_script.is_empty() {
+        group.throughput(Throughput::Elements(updates_near_script.len() as u64));
+        group.bench_function("updates_near_only", |b| {
+            b.iter_batched(
+                || support::build_set(&base_entries),
+                |mut set| {
+                    apply_script(&mut set, &updates_near_script);
+                    black_box(set.len());
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+
+    if !updates_far_script.is_empty() {
+        group.throughput(Throughput::Elements(updates_far_script.len() as u64));
+        group.bench_function("updates_far_only", |b| {
+            b.iter_batched(
+                || support::build_set(&base_entries),
+                |mut set| {
+                    apply_script(&mut set, &updates_far_script);
+                    black_box(set.len());
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+
+    if !removes_only_script.is_empty() {
+        group.throughput(Throughput::Elements(removes_only_script.len() as u64));
+        group.bench_function("removes_only", |b| {
+            b.iter_batched(
+                || support::build_set(&base_entries),
+                |mut set| {
+                    apply_script(&mut set, &removes_only_script);
+                    black_box(set.len());
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+
     group.finish();
 }
 
@@ -50,6 +96,11 @@ struct MemberState {
     score: f64,
 }
 
+enum UpdateDelta {
+    Near,
+    Far,
+}
+
 fn build_script(base_entries: &[(f64, String)], script_len: usize) -> Vec<Operation> {
     let mut rng = support::seeded_rng();
     let update_count = script_len * 50 / 100;
@@ -57,9 +108,9 @@ fn build_script(base_entries: &[(f64, String)], script_len: usize) -> Vec<Operat
     let remove_count = script_len - update_count - insert_count;
 
     let mut op_types = Vec::with_capacity(script_len);
-    op_types.extend(std::iter::repeat(OpType::Update).take(update_count));
-    op_types.extend(std::iter::repeat(OpType::Insert).take(insert_count));
-    op_types.extend(std::iter::repeat(OpType::Remove).take(remove_count));
+    op_types.extend(std::iter::repeat_n(OpType::Update, update_count));
+    op_types.extend(std::iter::repeat_n(OpType::Insert, insert_count));
+    op_types.extend(std::iter::repeat_n(OpType::Remove, remove_count));
     op_types.shuffle(&mut rng);
 
     let mut existing: Vec<MemberState> = base_entries
@@ -114,6 +165,56 @@ fn build_script(base_entries: &[(f64, String)], script_len: usize) -> Vec<Operat
     }
 
     script
+}
+
+fn build_updates_only_script(
+    base_entries: &[(f64, String)],
+    script_len: usize,
+    kind: UpdateDelta,
+) -> Vec<Operation> {
+    let mut rng = support::seeded_rng();
+    let mut existing: Vec<MemberState> = base_entries
+        .iter()
+        .map(|(score, member)| MemberState {
+            name: member.clone(),
+            score: *score,
+        })
+        .collect();
+    if existing.is_empty() {
+        return Vec::new();
+    }
+    let mut script = Vec::with_capacity(script_len);
+    for _ in 0..script_len {
+        let idx = rng.gen_range(0..existing.len());
+        let state = &mut existing[idx];
+        let delta = match kind {
+            UpdateDelta::Near => rng.gen_range(-1.0..=1.0),
+            UpdateDelta::Far => rng.gen_range(-750.0..=750.0),
+        };
+        state.score += delta;
+        script.push(Operation::Update {
+            member: state.name.clone(),
+            score: state.score,
+        });
+    }
+    script
+}
+
+fn build_removes_only_script(base_entries: &[(f64, String)], script_len: usize) -> Vec<Operation> {
+    let mut rng = support::seeded_rng();
+    let mut names: Vec<String> = base_entries
+        .iter()
+        .map(|(_, member)| member.clone())
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    names.shuffle(&mut rng);
+    names
+        .into_iter()
+        .take(script_len.min(base_entries.len()))
+        .map(|member| Operation::Remove { member })
+        .collect()
 }
 
 fn apply_script(set: &mut ScoreSet, script: &[Operation]) {

@@ -52,6 +52,7 @@ fn bench_range(c: &mut Criterion) {
 
     for (name, set) in score_datasets {
         add_score_range_benches(&mut score_group, name, set);
+        add_score_range_benches_rev(&mut score_group, name, set);
     }
     score_group.finish();
 }
@@ -115,9 +116,9 @@ fn add_score_range_benches(
     let len = ordered.len();
     let wide_target = ((len as f64) * 0.65).round() as usize;
     let specs = [
-        ("score/narrow", 1_000usize),
-        ("score/medium", 10_000usize),
-        ("score/wide", wide_target),
+        ("narrow", 1_000usize),
+        ("medium", 10_000usize),
+        ("wide", wide_target),
     ];
 
     for (label, target) in specs {
@@ -136,11 +137,13 @@ fn add_score_range_benches(
 
         let min_score = ordered[start_idx].0 .0;
         let max_score = ordered[end_idx].0 .0;
+        let start_member = ordered[start_idx].1;
+        let end_member = ordered[end_idx].1;
 
-        let mut iter = set.iter_from(OrderedFloat(min_score), "", false);
+        let min_key = OrderedFloat(min_score);
         let mut count = 0usize;
-        while let Some((_, score)) = iter.next() {
-            if score > max_score {
+        for (member, score) in set.iter_from(min_key, start_member, true) {
+            if score > max_score || (score == max_score && member > end_member) {
                 break;
             }
             count += 1;
@@ -150,14 +153,83 @@ fn add_score_range_benches(
             continue;
         }
 
-        let min_key = OrderedFloat(min_score);
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_function(BenchmarkId::new(label, name), |b| {
+        group.bench_function(BenchmarkId::new(format!("score/{label}"), name), |b| {
             b.iter(|| {
-                let mut iter = set.iter_from(min_key, "", false);
                 let mut yielded = 0usize;
-                while let Some((member, score)) = iter.next() {
-                    if score > max_score {
+                for (member, score) in set.iter_from(min_key, start_member, true) {
+                    if score > max_score || (score == max_score && member > end_member) {
+                        break;
+                    }
+                    black_box(member);
+                    black_box(score);
+                    yielded += 1;
+                }
+                black_box(yielded);
+            });
+        });
+    }
+}
+
+fn add_score_range_benches_rev(
+    group: &mut criterion::BenchmarkGroup<'_, WallTime>,
+    name: &str,
+    set: &ScoreSet,
+) {
+    let mut ordered: Vec<(OrderedFloat<f64>, &str)> = set
+        .iter_all()
+        .map(|(member, score)| (OrderedFloat(score), member))
+        .collect();
+    if ordered.is_empty() {
+        return;
+    }
+    ordered.sort_unstable();
+
+    let len = ordered.len();
+    let wide_target = ((len as f64) * 0.65).round() as usize;
+    let specs = [
+        ("narrow", 1_000usize),
+        ("medium", 10_000usize),
+        ("wide", wide_target),
+    ];
+
+    for (label, target) in specs {
+        let desired = target.clamp(1, len);
+        let mid = len / 2;
+        let mut start_idx = if desired >= len {
+            0
+        } else {
+            mid.saturating_sub(desired / 2)
+        };
+        let mut end_idx = start_idx + desired - 1;
+        if end_idx >= len {
+            end_idx = len - 1;
+            start_idx = len - desired;
+        }
+
+        let min_score = ordered[start_idx].0 .0;
+        let start_member = ordered[start_idx].1;
+
+        let start_rank = start_idx as isize;
+        let end_rank = end_idx as isize;
+        let mut count = 0usize;
+        for (member, score) in set.iter_range(start_rank, end_rank).rev() {
+            if score < min_score || (score == min_score && member < start_member) {
+                break;
+            }
+            count += 1;
+        }
+
+        if count == 0 {
+            continue;
+        }
+
+        group.throughput(Throughput::Elements(count as u64));
+        group.bench_function(BenchmarkId::new(format!("score_rev/{label}"), name), |b| {
+            b.iter(|| {
+                let mut yielded = 0usize;
+                for (member, score) in set.iter_range(start_rank, end_rank).rev() {
+                    if score < min_score || (score == min_score && member < start_member) {
                         break;
                     }
                     black_box(member);

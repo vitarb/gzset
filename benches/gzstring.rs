@@ -32,6 +32,10 @@ fn bench_string_shape(c: &mut Criterion) {
         let score_queries = support::pick_existing(set, desired);
         let rank_count = std::cmp::max(rank_query_count.min(score_queries.len()), 1);
         let rank_queries: Vec<String> = score_queries.iter().take(rank_count).cloned().collect();
+        let missing_queries: Vec<String> = (0..score_queries.len())
+            .map(|i| format!("__missing__:{i}"))
+            .collect();
+        let rank_missing = &missing_queries[..rank_queries.len()];
 
         group.throughput(Throughput::Elements(entries.len() as u64));
         group.bench_function(BenchmarkId::new("insert", name), |b| {
@@ -56,10 +60,28 @@ fn bench_string_shape(c: &mut Criterion) {
             });
         });
 
+        group.throughput(Throughput::Elements(missing_queries.len() as u64));
+        group.bench_function(BenchmarkId::new("score_missing", name), |b| {
+            b.iter(|| {
+                for member in &missing_queries {
+                    black_box(set.score(member));
+                }
+            });
+        });
+
         group.throughput(Throughput::Elements(rank_queries.len() as u64));
         group.bench_function(BenchmarkId::new("rank", name), |b| {
             b.iter(|| {
                 for member in &rank_queries {
+                    black_box(set.rank(member));
+                }
+            });
+        });
+
+        group.throughput(Throughput::Elements(rank_missing.len() as u64));
+        group.bench_function(BenchmarkId::new("rank_missing", name), |b| {
+            b.iter(|| {
+                for member in rank_missing {
                     black_box(set.rank(member));
                 }
             });
