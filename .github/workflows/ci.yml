@@ -40,5 +40,5 @@ jobs:
         run: cargo tree -d
         shell: bash
       - name: Test
-        run: cargo test --all --all-targets --verbose
+        run: cargo test --all --verbose
         shell: bash
