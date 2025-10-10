@@ -99,6 +99,7 @@ redis-module = []
 fast-hash = []
 reply-double = []
 bench-internals = []
+bench-borrowed = []
 
 [profile.release]
 debug = 1

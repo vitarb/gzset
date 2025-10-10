@@ -2,6 +2,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use gzset::ScoreSet;
 use rustc_hash::FxHashMap as FastHashMap;
 
+#[cfg(feature = "bench-borrowed")]
+use hashbrown::HashSet;
+
 mod support;
 
 const SET_SIZE: usize = 120_000;
@@ -66,6 +69,13 @@ fn bench_algebra(c: &mut Criterion) {
     group.bench_function("union/multikey/6sets", |b| {
         b.iter(|| {
             let cardinality = union_multi(&multi_sets);
+            black_box(cardinality);
+        });
+    });
+    #[cfg(feature = "bench-borrowed")]
+    group.bench_function("union/multikey/6sets_borrowed", |b| {
+        b.iter(|| {
+            let cardinality = union_multi_borrowed(&multi_sets);
             black_box(cardinality);
         });
     });
@@ -177,12 +187,26 @@ fn intercard_two(a: &ScoreSet, b: &ScoreSet, limit: Option<usize>) -> usize {
 
 fn union_multi(sets: &[&ScoreSet]) -> usize {
     let mut agg: FastHashMap<String, f64> = FastHashMap::default();
+    let total: usize = sets.iter().map(|set| set.len()).sum();
+    agg.reserve(total);
     for set in sets {
-        agg.reserve(set.len());
         for (member, score) in set.iter_all() {
             agg.entry(member.to_owned())
                 .and_modify(|v| *v += score)
                 .or_insert(score);
+        }
+    }
+    agg.len()
+}
+
+#[cfg(feature = "bench-borrowed")]
+fn union_multi_borrowed(sets: &[&ScoreSet]) -> usize {
+    let mut agg: HashSet<&str> = HashSet::default();
+    let total: usize = sets.iter().map(|set| set.len()).sum();
+    agg.reserve(total);
+    for set in sets {
+        for (member, _) in set.iter_all() {
+            agg.insert(member);
         }
     }
     agg.len()
