@@ -31,19 +31,21 @@ fn bench_topk(c: &mut Criterion) {
                 continue;
             }
 
-            let top_indices: Vec<usize> = (len - k..len).collect();
             let bottom_indices: Vec<usize> = (0..k).collect();
-            let top_start_rank = len.saturating_sub(k) as isize;
-            let top_end_rank = len.saturating_sub(1) as isize;
             let bottom_end_rank = (k.saturating_sub(1)) as isize;
 
             group.throughput(Throughput::Elements(k as u64));
             group.bench_function(BenchmarkId::new(format!("top/{k}"), name), |b| {
                 let mut results = vec![0.0f64; k];
                 b.iter(|| {
-                    for (slot, &rank) in top_indices.iter().enumerate() {
-                        let (_, score) = set.select_by_rank(rank);
-                        results[slot] = score;
+                    let mut iter = set.iter_desc();
+                    for slot in &mut results {
+                        if let Some((member, score)) = iter.next() {
+                            black_box(member);
+                            *slot = score;
+                        } else {
+                            break;
+                        }
                     }
                     black_box(&results);
                 });
@@ -53,13 +55,16 @@ fn bench_topk(c: &mut Criterion) {
             group.bench_function(
                 BenchmarkId::new(format!("top_with_members/{k}"), name),
                 |b| {
-                    let mut results = vec![0.0f64; k];
+                    let mut results = vec![(0usize, 0.0f64); k];
                     b.iter(|| {
-                        for (slot, &rank) in top_indices.iter().enumerate() {
-                            let (member, score) = set.select_by_rank(rank);
-                            black_box(member);
-                            black_box(score);
-                            results[slot] = score;
+                        let mut iter = set.iter_desc();
+                        for slot in &mut results {
+                            if let Some((member, score)) = iter.next() {
+                                black_box(member);
+                                *slot = (member.as_ptr() as usize, score);
+                            } else {
+                                break;
+                            }
                         }
                         black_box(&results);
                     });
@@ -68,16 +73,12 @@ fn bench_topk(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements(k as u64));
             group.bench_function(BenchmarkId::new(format!("top_iter/{k}"), name), |b| {
-                let mut results = vec![0.0f64; k];
+                let mut results: Vec<(usize, f64)> = Vec::with_capacity(k);
                 b.iter(|| {
-                    let mut iter = set.iter_range(top_start_rank, top_end_rank).rev();
-                    for slot_result in &mut results {
-                        if let Some((member, score)) = iter.next() {
-                            black_box(member);
-                            *slot_result = score;
-                        } else {
-                            break;
-                        }
+                    results.clear();
+                    for (member, score) in set.iter_desc().take(k) {
+                        black_box(member);
+                        results.push((member.as_ptr() as usize, score));
                     }
                     black_box(&results);
                 });
@@ -114,16 +115,12 @@ fn bench_topk(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements(k as u64));
             group.bench_function(BenchmarkId::new(format!("bottom_iter/{k}"), name), |b| {
-                let mut results = vec![0.0f64; k];
+                let mut results: Vec<(usize, f64)> = Vec::with_capacity(k);
                 b.iter(|| {
-                    let mut iter = set.iter_range(0, bottom_end_rank);
-                    for slot_result in &mut results {
-                        if let Some((member, score)) = iter.next() {
-                            black_box(member);
-                            *slot_result = score;
-                        } else {
-                            break;
-                        }
+                    results.clear();
+                    for (member, score) in set.iter_range_fwd(0, bottom_end_rank).take(k) {
+                        black_box(member);
+                        results.push((member.as_ptr() as usize, score));
                     }
                     black_box(&results);
                 });

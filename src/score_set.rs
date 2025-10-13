@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     convert::TryFrom,
+    hash::{Hash, Hasher},
     mem::size_of,
 };
 
@@ -39,6 +40,7 @@ pub struct ScoreSet {
     pub(crate) bucket_store: BucketStore,
     pub(crate) scores: Vec<f64>,
     pub(crate) pool: StringPool,
+    bucket_index: OrderStatsIndex,
     mem_bytes: usize,
     #[cfg(test)]
     mem_breakdown: MemBreakdown,
@@ -62,6 +64,7 @@ impl Default for ScoreSet {
             bucket_store: BucketStore::new(),
             scores: Vec::new(),
             pool: StringPool::default(),
+            bucket_index: OrderStatsIndex::new(),
             mem_bytes: 0,
             #[cfg(test)]
             mem_breakdown: MemBreakdown::default(),
@@ -132,6 +135,221 @@ impl<'a> BackState<'a> {
         match self {
             Self::Slice(iter) => iter.next().copied(),
             Self::Inline(inline) => inline.next(),
+        }
+    }
+}
+
+pub struct ScoreIterDesc<'a> {
+    pool: &'a StringPool,
+    store: &'a BucketStore,
+    outer: std::iter::Rev<std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketRef>>,
+    cur: Option<(BackState<'a>, OrderedFloat<f64>)>,
+}
+
+impl<'a> ScoreIterDesc<'a> {
+    fn new(
+        map: &'a BTreeMap<OrderedFloat<f64>, BucketRef>,
+        store: &'a BucketStore,
+        pool: &'a StringPool,
+    ) -> Self {
+        Self {
+            pool,
+            store,
+            outer: map.iter().rev(),
+            cur: None,
+        }
+    }
+}
+
+impl<'a> Iterator for ScoreIterDesc<'a> {
+    type Item = (&'a str, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some((ref mut state, score)) = self.cur {
+                if let Some(id) = state.next() {
+                    return Some((self.pool.get(id), score.0));
+                }
+                self.cur = None;
+            }
+            let (score, bucket_ref) = self.outer.next()?;
+            match *bucket_ref {
+                BucketRef::Inline1(member) => {
+                    return Some((self.pool.get(member), score.0));
+                }
+                BucketRef::Handle(bucket_id) => {
+                    let slice = self.store.slice(bucket_id);
+                    if slice.is_empty() {
+                        continue;
+                    }
+                    self.cur = Some((BackState::Slice(slice.iter().rev()), *score));
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, None)
+    }
+}
+
+#[derive(Default)]
+struct OrderStatsIndex {
+    root: Option<Box<OrderStatsNode>>,
+}
+
+impl OrderStatsIndex {
+    fn new() -> Self {
+        Self { root: None }
+    }
+
+    fn set(&mut self, key: OrderedFloat<f64>, count: usize) {
+        if count == 0 {
+            self.remove(key);
+            return;
+        }
+        self.root = OrderStatsNode::insert(self.root.take(), key, count);
+    }
+
+    fn remove(&mut self, key: OrderedFloat<f64>) {
+        self.root = OrderStatsNode::remove(self.root.take(), key);
+    }
+
+    fn prefix_before(&self, key: OrderedFloat<f64>) -> usize {
+        OrderStatsNode::prefix_before(&self.root, key)
+    }
+}
+
+#[derive(Clone)]
+struct OrderStatsNode {
+    key: OrderedFloat<f64>,
+    count: usize,
+    size: usize,
+    priority: u64,
+    left: Option<Box<OrderStatsNode>>,
+    right: Option<Box<OrderStatsNode>>,
+}
+
+impl OrderStatsNode {
+    fn new(key: OrderedFloat<f64>, count: usize) -> Box<Self> {
+        Box::new(Self {
+            key,
+            count,
+            size: count,
+            priority: Self::priority_for(key),
+            left: None,
+            right: None,
+        })
+    }
+
+    fn priority_for(key: OrderedFloat<f64>) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn update_size(&mut self) {
+        self.size = self.count + Self::subtree_size(&self.left) + Self::subtree_size(&self.right);
+    }
+
+    fn subtree_size(node: &Option<Box<Self>>) -> usize {
+        node.as_ref().map_or(0, |n| n.size)
+    }
+
+    fn rotate_right(mut root: Box<Self>) -> Box<Self> {
+        let mut pivot = root.left.take().expect("rotate_right requires left child");
+        root.left = pivot.right.take();
+        root.update_size();
+        pivot.right = Some(root);
+        pivot.update_size();
+        pivot
+    }
+
+    fn rotate_left(mut root: Box<Self>) -> Box<Self> {
+        let mut pivot = root.right.take().expect("rotate_left requires right child");
+        root.right = pivot.left.take();
+        root.update_size();
+        pivot.left = Some(root);
+        pivot.update_size();
+        pivot
+    }
+
+    fn insert(root: Option<Box<Self>>, key: OrderedFloat<f64>, count: usize) -> Option<Box<Self>> {
+        match root {
+            None => Some(Self::new(key, count)),
+            Some(mut node) => {
+                if key < node.key {
+                    node.left = Self::insert(node.left.take(), key, count);
+                    if let Some(left) = node.left.as_ref() {
+                        if left.priority < node.priority {
+                            node = Self::rotate_right(node);
+                        }
+                    }
+                } else if key > node.key {
+                    node.right = Self::insert(node.right.take(), key, count);
+                    if let Some(right) = node.right.as_ref() {
+                        if right.priority < node.priority {
+                            node = Self::rotate_left(node);
+                        }
+                    }
+                } else {
+                    node.count = count;
+                }
+                node.update_size();
+                Some(node)
+            }
+        }
+    }
+
+    fn remove(root: Option<Box<Self>>, key: OrderedFloat<f64>) -> Option<Box<Self>> {
+        match root {
+            None => None,
+            Some(mut node) => {
+                if key < node.key {
+                    node.left = Self::remove(node.left.take(), key);
+                    node.update_size();
+                    Some(node)
+                } else if key > node.key {
+                    node.right = Self::remove(node.right.take(), key);
+                    node.update_size();
+                    Some(node)
+                } else {
+                    Self::merge(node.left.take(), node.right.take())
+                }
+            }
+        }
+    }
+
+    fn merge(left: Option<Box<Self>>, right: Option<Box<Self>>) -> Option<Box<Self>> {
+        match (left, right) {
+            (None, other) => other,
+            (other, None) => other,
+            (Some(mut l), Some(mut r)) => {
+                if l.priority <= r.priority {
+                    l.right = Self::merge(l.right.take(), Some(r));
+                    l.update_size();
+                    Some(l)
+                } else {
+                    r.left = Self::merge(Some(l), r.left.take());
+                    r.update_size();
+                    Some(r)
+                }
+            }
+        }
+    }
+
+    fn prefix_before(root: &Option<Box<Self>>, key: OrderedFloat<f64>) -> usize {
+        match root {
+            None => 0,
+            Some(node) => {
+                if key <= node.key {
+                    Self::prefix_before(&node.left, key)
+                } else {
+                    Self::subtree_size(&node.left)
+                        + node.count
+                        + Self::prefix_before(&node.right, key)
+                }
+            }
         }
     }
 }
@@ -509,6 +727,22 @@ impl<'a> ExactSizeIterator for ScoreIter<'a> {
 }
 
 impl ScoreSet {
+    fn bucket_len(&self, bucket_ref: BucketRef) -> usize {
+        match bucket_ref {
+            BucketRef::Inline1(_) => 1,
+            BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
+        }
+    }
+
+    fn refresh_bucket_index(&mut self, key: OrderedFloat<f64>) {
+        if let Some(&bucket_ref) = self.by_score.get(&key) {
+            let count = self.bucket_len(bucket_ref);
+            self.bucket_index.set(key, count);
+        } else {
+            self.bucket_index.remove(key);
+        }
+    }
+
     #[inline]
     pub fn mem_bytes(&self) -> usize {
         self.mem_bytes
@@ -698,6 +932,8 @@ impl ScoreSet {
                     }
                 }
             }
+
+            self.refresh_bucket_index(old_key);
         }
 
         self.scores[idx] = score;
@@ -738,6 +974,8 @@ impl ScoreSet {
                 true
             }
         };
+
+        self.refresh_bucket_index(key);
 
         if old_key_removed || new_key_created {
             self.apply_score_map_delta(prev_map);
@@ -799,6 +1037,7 @@ impl ScoreSet {
             debug_assert!(removed.is_some(), "score key must exist when removing");
             self.apply_score_map_delta(prev_map);
         }
+        self.refresh_bucket_index(score);
         if bucket_delta != 0 {
             self.apply_bucket_mem_delta(bucket_delta);
         }
@@ -874,14 +1113,7 @@ impl ScoreSet {
     /// produced by [`Self::rank_find_only`]. Available only when the
     /// `bench-internals` feature is enabled.
     pub fn rank_resolve_only(&self, find: RankFind) -> usize {
-        let prefix = self
-            .by_score
-            .range(..find.score_key)
-            .map(|(_, bref)| match *bref {
-                BucketRef::Inline1(_) => 1,
-                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
-            })
-            .sum::<usize>();
+        let prefix = self.bucket_index.prefix_before(find.score_key);
         prefix + find.pos
     }
 
@@ -903,14 +1135,7 @@ impl ScoreSet {
                 .binary_search_by(|&m| self.pool.get(m).cmp(member))
                 .ok(),
         }?;
-        let prefix = self
-            .by_score
-            .range(..score_key)
-            .map(|(_, bref)| match *bref {
-                BucketRef::Inline1(_) => 1,
-                BucketRef::Handle(bucket_id) => self.bucket_store.len(bucket_id),
-            })
-            .sum::<usize>();
+        let prefix = self.bucket_index.prefix_before(score_key);
         Some(prefix + pos)
     }
 
@@ -1009,6 +1234,10 @@ impl ScoreSet {
 
     pub fn iter_all(&self) -> impl Iterator<Item = (&str, f64)> + '_ {
         self.iter_range_fwd(0, self.len() as isize - 1)
+    }
+
+    pub fn iter_desc(&self) -> ScoreIterDesc<'_> {
+        ScoreIterDesc::new(&self.by_score, &self.bucket_store, &self.pool)
     }
 
     pub fn iter_from<'a>(
@@ -1174,6 +1403,7 @@ impl ScoreSet {
                         prev_map = Some(Self::score_map_bytes(&self.by_score));
                     }
                     self.by_score.remove(&score_key);
+                    self.refresh_bucket_index(score_key);
                     emitted += 1;
                 }
                 BucketRef::Handle(bucket_id) => {
@@ -1236,6 +1466,7 @@ impl ScoreSet {
                     if bucket_delta != 0 {
                         self.apply_bucket_mem_delta(bucket_delta);
                     }
+                    self.refresh_bucket_index(score_key);
                 }
             }
         }
@@ -1520,6 +1751,44 @@ mod tests {
                 "bucket vector should be truncated or empty"
             ),
         }
+    }
+
+    #[test]
+    fn descending_iterator_matches_reverse() {
+        let mut set = ScoreSet::default();
+        for (score, member) in [(1.0, "a"), (2.0, "b"), (1.5, "c"), (3.0, "d")] {
+            assert!(set.insert(score, member));
+        }
+
+        let mut asc: Vec<(String, f64)> = set
+            .iter_all()
+            .map(|(member, score)| (member.to_owned(), score))
+            .collect();
+        let desc: Vec<(String, f64)> = set
+            .iter_desc()
+            .map(|(member, score)| (member.to_owned(), score))
+            .collect();
+        asc.reverse();
+        assert_eq!(desc, asc);
+    }
+
+    #[test]
+    fn rank_updates_follow_bucket_mutations() {
+        let mut set = ScoreSet::default();
+        assert!(set.insert(10.0, "a"));
+        assert!(set.insert(20.0, "b"));
+        assert!(set.insert(20.0, "c"));
+        assert_eq!(set.rank("a"), Some(0));
+        assert_eq!(set.rank("b"), Some(1));
+        assert_eq!(set.rank("c"), Some(2));
+
+        assert!(set.remove("b"));
+        assert_eq!(set.rank("c"), Some(1));
+
+        assert!(set.insert(5.0, "d"));
+        assert_eq!(set.rank("d"), Some(0));
+        assert_eq!(set.rank("a"), Some(1));
+        assert_eq!(set.rank("c"), Some(2));
     }
 
     #[test]
