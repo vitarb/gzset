@@ -21,19 +21,35 @@ fn bench_randmember(c: &mut Criterion) {
     group.warm_up_time(warmup);
     group.sample_size(sample_size);
     group.throughput(Throughput::Elements(1));
+    let single_indices: Vec<usize> = {
+        let mut rng = support::seeded_rng();
+        (0..INDEX_BATCHES * COUNT_SMALL)
+            .map(|_| rng.gen_range(0..len))
+            .collect()
+    };
     group.bench_function("single/no_scores", |b| {
-        let rng = RefCell::new(support::seeded_rng());
+        let cursor = RefCell::new(0usize);
         b.iter(|| {
-            let idx = rng.borrow_mut().gen_range(0..len);
-            let (member, _) = set.select_by_rank(idx);
+            let index = {
+                let mut pos = cursor.borrow_mut();
+                let current = *pos;
+                *pos = (*pos + 1) % single_indices.len();
+                single_indices[current]
+            };
+            let (member, _) = set.select_by_rank(index);
             black_box(member);
         });
     });
     group.bench_function("single/with_scores", |b| {
-        let rng = RefCell::new(support::seeded_rng());
+        let cursor = RefCell::new(0usize);
         b.iter(|| {
-            let idx = rng.borrow_mut().gen_range(0..len);
-            let (member, score) = set.select_by_rank(idx);
+            let index = {
+                let mut pos = cursor.borrow_mut();
+                let current = *pos;
+                *pos = (*pos + 1) % single_indices.len();
+                single_indices[current]
+            };
+            let (member, score) = set.select_by_rank(index);
             black_box((member, score));
         });
     });
