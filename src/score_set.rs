@@ -354,11 +354,23 @@ impl OrderStatsNode {
     }
 }
 
+enum CurrentBucket<'a> {
+    Inline {
+        score: f64,
+        member: MemberId,
+    },
+    Slice {
+        score: f64,
+        members: &'a [MemberId],
+        index: usize,
+    },
+}
+
 pub struct RangeIterFwd<'a> {
     pool: &'a StringPool,
     store: &'a BucketStore,
     outer: std::collections::btree_map::Iter<'a, OrderedFloat<f64>, BucketRef>,
-    cur: Option<(std::slice::Iter<'a, MemberId>, OrderedFloat<f64>)>,
+    current: Option<CurrentBucket<'a>>,
     remaining_skip: usize,
     remaining_take: usize,
 }
@@ -375,7 +387,7 @@ impl<'a> RangeIterFwd<'a> {
             pool,
             store,
             outer: map.iter(),
-            cur: None,
+            current: None,
             remaining_skip: skip,
             remaining_take: take,
         }
@@ -403,17 +415,48 @@ impl<'a> Iterator for RangeIterFwd<'a> {
             return None;
         }
         loop {
-            if let Some((ref mut iter, score)) = self.cur {
-                for &id in iter.by_ref() {
-                    if self.remaining_skip > 0 {
-                        self.remaining_skip -= 1;
-                        continue;
+            if let Some(bucket) = self.current.take() {
+                match bucket {
+                    CurrentBucket::Inline { score, member } => {
+                        if self.remaining_skip > 0 {
+                            self.remaining_skip -= 1;
+                            continue;
+                        }
+                        self.remaining_take -= 1;
+                        let member = self.pool.get(member);
+                        return Some((member, score));
                     }
-                    self.remaining_take -= 1;
-                    let member = self.pool.get(id);
-                    return Some((member, score.0));
+                    CurrentBucket::Slice {
+                        score,
+                        members,
+                        mut index,
+                    } => {
+                        let len = members.len();
+                        if index >= len {
+                            continue;
+                        }
+                        if self.remaining_skip > 0 {
+                            let skip = self.remaining_skip.min(len - index);
+                            index += skip;
+                            self.remaining_skip -= skip;
+                        }
+                        if index >= len {
+                            continue;
+                        }
+                        let member_id = members[index];
+                        index += 1;
+                        if index < len {
+                            self.current = Some(CurrentBucket::Slice {
+                                score,
+                                members,
+                                index,
+                            });
+                        }
+                        self.remaining_take -= 1;
+                        let member = self.pool.get(member_id);
+                        return Some((member, score));
+                    }
                 }
-                self.cur = None;
             }
             let Some((score, bucket_ref)) = self.outer.next() else {
                 self.remaining_take = 0;
@@ -421,32 +464,21 @@ impl<'a> Iterator for RangeIterFwd<'a> {
             };
             match *bucket_ref {
                 BucketRef::Inline1(member) => {
-                    if self.remaining_skip > 0 {
-                        self.remaining_skip -= 1;
-                        continue;
-                    }
-                    self.remaining_take -= 1;
-                    let member = self.pool.get(member);
-                    return Some((member, score.0));
+                    self.current = Some(CurrentBucket::Inline {
+                        score: score.0,
+                        member,
+                    });
                 }
                 BucketRef::Handle(bucket_id) => {
-                    let mut slice = self.store.slice(bucket_id);
+                    let slice = self.store.slice(bucket_id);
                     if slice.is_empty() {
                         continue;
                     }
-                    if self.remaining_skip >= slice.len() {
-                        self.remaining_skip -= slice.len();
-                        continue;
-                    }
-                    if self.remaining_skip > 0 {
-                        let skip = self.remaining_skip;
-                        self.remaining_skip = 0;
-                        slice = &slice[skip..];
-                    }
-                    if slice.is_empty() {
-                        continue;
-                    }
-                    self.cur = Some((slice.iter(), *score));
+                    self.current = Some(CurrentBucket::Slice {
+                        score: score.0,
+                        members: slice,
+                        index: 0,
+                    });
                 }
             }
         }
